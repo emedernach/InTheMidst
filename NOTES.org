@@ -1,0 +1,502 @@
+
+* SQL parser/compiler 
+
+The goal was to  produce an easy to modify grammar
+to extend  SQL when needed.  It  can recognize and
+build parse tree for non left recursive grammars.
+
+- Supported SQL syntax
+
+SELECT [DISTINCT]
+WHERE
+AND/OR
+ORDER BY [ASC/DESC]
+LIMIT
+LIKE
+IN
+BETWEEN
+Aliases (field, table, subquery)
+JOIN (Inner, Left, Right, Full)
+IS [NOT] NULL
+GROUP BY
+HAVING
+UNION / UNION ALL / INTERSECT / EXCEPT
+
+SELECT TOP is not standard SQL, use LIMIT instead
+
+- Unsupported SQL syntax
+
+All  syntaxes for database  or table  modifications are
+not supported. Only syntax for query is supported.
+
+INSERT INTO
+SELECT INTO
+CREATE DB
+CREATE TABLE
+CREATE VIEW
+CREATE INDEX
+DROP TABLE
+DROP DATABASE
+DROP INDEX
+ALTER TABLE
+UPDATE
+DELETE
+
+* Data Integration: Mediation with Global As View approach
+
+Virtual  tables  such as  Object  are replaced  by
+their definition:
+
+Object =>
+(SELECT * FROM master_01
+ UNION ALL 
+ SELECT * FROM master_02
+ UNION ALL 
+ ...
+) AS Object 
+
+Then syntactic transformations  are applied to the
+resulting AST in order to run the resulting query.
+
+As we apply  syntactic transformation we choose to
+write   transformations    directly   taking   the
+AST.  Retrospectively   it  would  be   better  to
+translate the AST to a logic tree and come back to
+a SQL query.
+
+* Spherical Distance computation
+
+Beware  that if  2 points  are near  the precision
+could be an issue.
+
+For instance, distance  obtained by scalar product
+is not accurate.
+
+The method we choose is the following:
+
+(A - B)^2 = A^2 + B^2 - 2A.B = 2(1 - cos(angle))
+
+or
+
+cos(angle) = 1 - 2 sin(angle/2)^2
+1 - cos(angle) = 2 sin(angle/2)^2
+
+so we have :
+
+(A - B)^2 = 4 sin(angle/2)^2
+
+Notes:
+ Moon = 30 arc-minutes
+ 1 arc-minute = 1/60 degree
+
+* Operator Commutativity with UNION
+
+If an  operator commutes with UNION  then we could
+rewrite it to be executed locally on all chunks.
+
+ Op UNION = UNION Op
+
+For instance:
+- Search in a rectangle
+- Search in a circle
+- Joins of tables partitioned on the same key
+
+But  Operator like  spatial  join (or  crossmatch)
+does  not commute with  UNION because  of borders,
+this  is why  we  have a  syntactic extension  for
+CROSMATCH    and    a   corresponding    syntactic
+transformation.
+
+SpatialJoin(T1, T2,  radius) = 
+{ (p1,  p2) | p1 in  T1, p2 in T2,  
+  dist(p1, p2) < radius }
+
+* Spatial Joins (CROSSMATCH)
+
+SpatialJoin(T1, T2, radius) = 
+  UNION_ALL (in parallel) for all buckets [x_min,x_max,y_min,y_max,z_min,z_max]
+    epsilon = 2*sin(radians(radius/2))
+    BucketT1 = T1 / [x_min,x_max,y_min,y_max,z_min,z_max] 
+    BucketT2 = 
+     T2 / [x_min - epsilon,x_max + epsilon,
+           y_min - epsilon,y_max + epsilon,
+           z_min - epsilon,z_max + epsilon]
+    SELECT *
+    FROM BucketT1 B1, BucketT2 B2
+    WHERE conesearch(B1.ra, B1.decl, B2.ra, B2.decl, radius) ;
+
+
+
+
+* FDW
+
+FDW postgres problem:
+ - No foreign function calls
+ - Extremely inefficient joins
+ - Extremely inefficient predicate filtering
+
+Solution:
+ - Find sub-queries that could be executed aside.
+ - Store the result in a temporary table on the pool
+ - Export this table to the master
+ - Replace the sub-query with the foreign table
+
+* Geometrical query speedup
+
+In order to speed up geometrical query we use this
+index :
+
+CREATE INDEX source_idx ON source
+USING btree ((cos(radians(ra))*cos(radians(decl))),
+             (sin(radians(ra))*cos(radians(decl))),
+             (sin(radians(decl))));
+
+Then  we  project  each  (ra,decl)  point  to  the
+celestial sphere on the point (x,y,z)
+
+Geometrical query use (x,y,z) instead of (ra,decl)
+for cone search and  spatial join. Bounding box is
+used to restrain the  space search. For instance a
+cone  search becomes  a sphere  search  on (x,y,z)
+coordinates,  and we  apply a  cube  bounding this
+sphere to restrain the search.
+
+* Benchmarks
+
+CREATE OR REPLACE FUNCTION create_tmp_bucket(nbpoints bigint)
+RETURNS VOID
+AS $$
+DROP TABLE IF EXISTS tmp_bucket ;
+CREATE TEMPORARY TABLE tmp_bucket AS
+  SELECT pointid,
+         sign(Y) * degrees(acos(X / sqrt(X*X + Y*Y + Z*Z))) AS ra,
+         degrees(asin(Z / sqrt(X*X + Y*Y + Z*Z))) AS decl
+  FROM
+  ( SELECT pointid, 2*random() - 1. as X, 2*random() - 1. as Y, 2*random() - 1. as Z
+    FROM (SELECT * FROM generate_series(1,nbpoints) AS pointid) as _1 ) as _2
+  WHERE X*X + Y*Y + Z*Z > 0. AND X*X + Y*Y + Z*Z < 1. ;
+$$ language SQL ;
+
+CREATE OR REPLACE FUNCTION angular_distance(
+  ra1 double precision,
+  decl1 double precision,
+  ra2 double precision,
+  decl2 double precision)
+RETURNS DOUBLE PRECISION
+AS $$
+SELECT
+degrees(2*asin(sqrt(sin(radians((decl2 - decl1)/2))^2 +
+        sin(radians((ra2 - ra1)/2))^2 * (cos(radians((decl2 + decl1)/2))^2 -
+        sin(radians((decl2 - decl1)/2))^2)))) ;
+$$ language SQL immutable ;        
+
+CREATE OR REPLACE
+FUNCTION count_tmp_bucket_1_a(radius double precision)
+RETURNS BIGINT
+AS $$
+SELECT count(*)
+FROM tmp_bucket B1, tmp_bucket B2
+WHERE angular_distance(B1.ra, B1.decl, B2.ra, B2.decl) <= radius ;
+$$ language SQL immutable ;        
+
+CREATE OR REPLACE
+FUNCTION count_tmp_bucket_1_b(radius double precision)
+RETURNS BIGINT
+AS $$
+SELECT count(*)
+FROM tmp_bucket B1, tmp_bucket B2
+WHERE conesearch(B1.ra, B1.decl, B2.ra, B2.decl, radius) ;
+$$ language SQL immutable ;        
+
+CREATE OR REPLACE
+FUNCTION count_tmp_bucket_2_a(radius double precision)
+RETURNS BIGINT
+AS $$
+SELECT count(*)
+FROM tmp_bucket B1, tmp_bucket B2
+WHERE angular_distance(B1.ra, B1.decl, B2.ra, B2.decl) <= radius
+  AND B1.pointid != B2.pointid ;
+$$ language SQL immutable ;        
+
+CREATE OR REPLACE
+FUNCTION count_tmp_bucket_2_b(radius double precision)
+RETURNS BIGINT
+AS $$
+SELECT count(*)
+FROM tmp_bucket B1, tmp_bucket B2
+WHERE conesearch(B1.ra, B1.decl, B2.ra, B2.decl, radius) 
+  AND B1.pointid != B2.pointid ;
+$$ language SQL immutable ;        
+
+-- Radians
+-- 10 arc secondes ~ 0.00005
+--  1 arc min ~ 0.0003
+-- 10 arc min ~ 0.003
+
+\set radius 0.003
+\set nbpoints 20000 
+
+SELECT create_tmp_bucket(:nbpoints) ;
+SELECT count_tmp_bucket_1_a(:radius) ;
+
+SELECT create_tmp_bucket(:nbpoints) ;
+SELECT count_tmp_bucket_1_b(:radius) ;
+
+SELECT create_tmp_bucket(:nbpoints) ;
+SELECT count_tmp_bucket_2_a(:radius) ;
+
+SELECT create_tmp_bucket(:nbpoints) ;
+SELECT count_tmp_bucket_2_b(:radius) ;
+
+select count(*) from tmp_bucket  ;
+
+ *_b avec cone_search
+ 2_* avec id differentes
+
+sans aucun index sur ra/decl :
+
+| nbpoints | radius | 1_a                | 1_b              | 2_a           | 2_b          |
+|          |        |                    |                  |               |              |
+|          |        | #resultats / temps |                  |               |              |
+|          |        |                    |                  |               |              |
+|      100 | 0.003  | 48 / 15 ms         | 43 / 15 ms       | 0 / 8 ms      | 0 / 8 ms     |
+|     1000 | "      | 521 / 332 ms       | 532 / 240 ms     | 0 / 340 ms    | 0 / 173 ms   |
+|    10000 | "      | 5282 / 32388 ms    | 5152 / 14832 ms  | 0 / 32422 ms  | 0 / 16773 ms |
+|    20000 | "      | 10514 / 130531 ms  | 10360 / 60070 ms | 0 / 129532 ms | 0 / 66452 ms |
+|          |        |                    |                  |               |              |
+|          |        | O(N) / O(N^2)      | O(N) / O(N^2)    | ? / O(N^2)    | ? / O(N^2)   |
+
+
+
+CREATE OR REPLACE FUNCTION create_tmp_bucket_with_index(nbpoints bigint)
+RETURNS VOID
+AS $$
+DROP TABLE IF EXISTS tmp_bucket ;
+CREATE TEMPORARY TABLE tmp_bucket AS
+  SELECT pointid,
+         sign(Y) * degrees(acos(X / sqrt(X*X + Y*Y + Z*Z))) AS ra,
+         degrees(asin(Z / sqrt(X*X + Y*Y + Z*Z))) AS decl
+  FROM
+  ( SELECT pointid, 2*random() - 1. as X, 2*random() - 1. as Y, 2*random() - 1. as Z
+    FROM (SELECT * FROM generate_series(1,nbpoints) AS pointid) as _1 ) as _2
+  WHERE X*X + Y*Y + Z*Z > 0. AND X*X + Y*Y + Z*Z < 1. ;
+
+CREATE INDEX tmp_bucket_xyz_idx ON tmp_bucket
+USING btree ((cos(radians(ra))*cos(radians(decl))),
+             (sin(radians(ra))*cos(radians(decl))),
+             (sin(radians(decl))));
+  
+$$ language SQL ;
+
+CREATE OR REPLACE FUNCTION create_tmp_bucket_with_index_and_cluster(nbpoints bigint)
+RETURNS VOID
+AS $$
+DROP TABLE IF EXISTS tmp_bucket ;
+CREATE TEMPORARY TABLE tmp_bucket AS
+  SELECT pointid,
+         sign(Y) * degrees(acos(X / sqrt(X*X + Y*Y + Z*Z))) AS ra,
+         degrees(asin(Z / sqrt(X*X + Y*Y + Z*Z))) AS decl
+  FROM
+  ( SELECT pointid, 2*random() - 1. as X, 2*random() - 1. as Y, 2*random() - 1. as Z
+    FROM (SELECT * FROM generate_series(1,nbpoints) AS pointid) as _1 ) as _2
+  WHERE X*X + Y*Y + Z*Z > 0. AND X*X + Y*Y + Z*Z < 1. ;
+
+CREATE INDEX tmp_bucket_xyz_idx ON tmp_bucket
+USING btree ((cos(radians(ra))*cos(radians(decl))),
+             (sin(radians(ra))*cos(radians(decl))),
+             (sin(radians(decl))));
+
+CLUSTER tmp_bucket USING tmp_bucket_xyz_idx ;
+
+ANALYZE tmp_bucket ;
+             
+$$ language SQL ;
+
+\set radius 0.003
+\set nbpoints 10000000
+
+SELECT create_tmp_bucket_with_index(:nbpoints) ;
+SELECT count_tmp_bucket_1_a(:radius) ;
+
+SELECT create_tmp_bucket_with_index(:nbpoints) ;
+SELECT count_tmp_bucket_1_b(:radius) ;
+
+SELECT create_tmp_bucket_with_index(:nbpoints) ;
+SELECT count_tmp_bucket_2_a(:radius) ;
+
+SELECT create_tmp_bucket_with_index(:nbpoints) ;
+SELECT count_tmp_bucket_2_b(:radius) ;
+
+avec index sans cluster/analyze :
+
+ 1_a   idem, n'utilise pas l'index
+ 1_b   utilise l'index : O(N) / O(quasi N)
+ 2_a   idem, n'utilise pas l'index
+ 2_b   utilise l'index : O(??) / O(??)
+
+| nbpoints | radius | 1_a                | 1_b                 | 2_a           | 2_b               |
+|          |        |                    |                     |               |                   |
+|          |        | #resultats / temps |                     |               |                   |
+|          |        |                    |                     |               |                   |
+|      100 | 0.003  | 55 / 15 ms         | 40 / 1 ms           | 0 / 15 ms     | 0 / 7 ms          |
+|     1000 | "      | 534 / 341 ms       | 512 / 15 ms         | 0 / 315 ms    | 0 / 7 ms          |
+|    10000 | "      | 5261 / 32427 ms    | 5217 / 48 ms        | 0 / 32954 ms  | 0 / 40 ms         |
+|    20000 | "      | 10600 /  131482 ms | 10323 / 64 ms       | 0 / 132039 ms | 2 / 43 ms         |
+|   100000 | "      | X / X              | 52320 / 322 ms      | X / X         | 6 / 233 ms        |
+|  1000000 | "      | "                  | 524797 / 5159 ms    | "             | 784 / 4216 ms     |
+| 10000000 | "      | "                  | 5312684 / 164587 ms | "             | 75998 / 154258 ms |
+|          |        |                    |                     |               |                   |
+
+\set radius 0.003
+\set nbpoints 10000000
+
+SELECT create_tmp_bucket_with_index_and_cluster(:nbpoints) ;
+SELECT count_tmp_bucket_1_b(:radius) ;
+
+SELECT create_tmp_bucket_with_index_and_cluster(:nbpoints) ;
+SELECT count_tmp_bucket_2_b(:radius) ;
+
+avec index et cluster/analyze :
+
+ 1_b   utilise l'index : O(N) / O(N) et on gagne un facteur
+ 2_b   utilise l'index : O(??) / O(??) on ne gagne presque rien 
+
+| nbpoints | radius | 1_b                 | 2_b               |
+|          |        |                     |                   |
+|          |        | #resultats / temps  |                   |
+|          |        |                     |                   |
+|      100 | 0.003  | 50 / 1ms            | 0 / 2 ms          |
+|     1000 | "      | 527 / 4 ms          | 0 / 15 ms         |
+|    10000 | "      | 5275 / 40 ms        | 0 / 21 ms         |
+|   100000 | "      | 52348 / 309 ms      | 8 / 222 ms        |
+|  1000000 | "      | 525481 / 3980 ms    | 632 / 3176 ms     |
+| 10000000 | "      | 5311315 / 126902 ms | 75384 / 119788 ms |
+|          |        |                     |                   |
+
+\set radius 0.003
+\set nbpoints 1000
+
+CREATE OR REPLACE FUNCTION create_tmp_bucket_with_index(nbpoints bigint)
+RETURNS VOID
+AS $$
+CREATE TEMPORARY TABLE tmp_bucket AS
+  SELECT pointid,
+         sign(Y) * degrees(acos(X / sqrt(X*X + Y*Y + Z*Z))) AS ra,
+         degrees(asin(Z / sqrt(X*X + Y*Y + Z*Z))) AS decl
+  FROM
+  ( SELECT pointid, 2*random() - 1. as X, 2*random() - 1. as Y, 2*random() - 1. as Z
+    FROM (SELECT * FROM generate_series(1,nbpoints) AS pointid) as _1 ) as _2
+  WHERE X*X + Y*Y + Z*Z > 0. AND X*X + Y*Y + Z*Z < 1. ;
+
+CREATE INDEX tmp_bucket_xyz_idx ON tmp_bucket
+USING btree ((cos(radians(ra))*cos(radians(decl))),
+             (sin(radians(ra))*cos(radians(decl))),
+             (sin(radians(decl))));
+  
+$$ language SQL ;
+
+CREATE OR REPLACE FUNCTION create_tmp_bucket_with_index_and_cluster(nbpoints bigint)
+RETURNS VOID
+AS $$
+CREATE TEMPORARY TABLE tmp_bucket AS
+  SELECT pointid,
+         sign(Y) * degrees(acos(X / sqrt(X*X + Y*Y + Z*Z))) AS ra,
+         degrees(asin(Z / sqrt(X*X + Y*Y + Z*Z))) AS decl
+  FROM
+  ( SELECT pointid, 2*random() - 1. as X, 2*random() - 1. as Y, 2*random() - 1. as Z
+    FROM (SELECT * FROM generate_series(1,nbpoints) AS pointid) as _1 ) as _2
+  WHERE X*X + Y*Y + Z*Z > 0. AND X*X + Y*Y + Z*Z < 1. ;
+
+CREATE INDEX tmp_bucket_xyz_idx ON tmp_bucket
+USING btree ((cos(radians(ra))*cos(radians(decl))),
+             (sin(radians(ra))*cos(radians(decl))),
+             (sin(radians(decl))));
+
+CLUSTER tmp_bucket USING tmp_bucket_xyz_idx ;
+
+ANALYZE tmp_bucket ;
+             
+$$ language SQL ;
+
+CREATE OR REPLACE FUNCTION tmp_transaction_1(nbpoints bigint, radius double precision)
+RETURNS VOID
+AS $$
+BEGIN 
+ DROP TABLE IF EXISTS tmp_bucket ;
+ PERFORM  create_tmp_bucket_with_index_and_cluster(nbpoints) ;
+ PERFORM  count_tmp_bucket_1_b(radius) ;
+END ;
+$$ language plpgsql ;
+
+CREATE OR REPLACE FUNCTION tmp_transaction_2(nbpoints bigint, radius double precision)
+RETURNS VOID
+AS $$
+BEGIN
+ DROP TABLE IF EXISTS tmp_bucket ;
+ PERFORM  create_tmp_bucket_with_index_and_cluster(nbpoints) ;
+ PERFORM  count_tmp_bucket_2_b(radius) ;
+END ;
+$$ language plpgsql ;
+
+SELECT tmp_transaction_1(1000, 0.003) ;
+SELECT tmp_transaction_2(1000, 0.003) ;
+
+
+temps total (creation/calcul/drop)
+
+| nbpoints | radius | 1_b       | 2_b     |
+|          |        |           |         |
+|          |        |           |         |
+|          |        |           |         |
+|      100 | 0.003  | 30 ms     | 30 ms   |
+|     1000 | "      | 32 ms     | 35 ms   |
+|    10000 | "      | 68 ms     | 47 ms   |
+|   100000 | "      | 650 ms    | 560 ms  |
+|  1000000 | "      | 8074 ms   | 7208 ms |
+| 10000000 | "      | 339826 ms |331593 ms|
+|          |        |           |         |
+
+On est domine par la creation et l'indexage !
+
+dans ce cas est-ce vraiment indispensable de faire le cluster/analyze pour la table temporaire ?
+
+par exemple pour 10 millions  de points cluster permet de faire gagner
+40s sur les 160s, mais le temps de le creer combien de temps perd-on?
+
+CREATE OR REPLACE FUNCTION tmp_transaction_3(nbpoints bigint, radius double precision)
+RETURNS VOID
+AS $$
+BEGIN 
+ DROP TABLE IF EXISTS tmp_bucket ;
+ PERFORM  create_tmp_bucket_with_index(nbpoints) ;
+ PERFORM  count_tmp_bucket_1_b(radius) ;
+END ;
+$$ language plpgsql ;
+
+CREATE OR REPLACE FUNCTION tmp_transaction_4(nbpoints bigint, radius double precision)
+RETURNS VOID
+AS $$
+BEGIN
+ DROP TABLE IF EXISTS tmp_bucket ;
+ PERFORM  create_tmp_bucket_with_index(nbpoints) ;
+ PERFORM  count_tmp_bucket_2_b(radius) ;
+END ;
+$$ language plpgsql ;
+
+SELECT tmp_transaction_3(10000000, 0.003) ;
+SELECT tmp_transaction_4(10000000, 0.003) ;
+
+
+| nbpoints | radius |    1_b |    2_b |
+|          |        |        |        |
+|          |        |        |        |
+|      100 | 0.003  |     24 |     15 |
+|     1000 | "      |     37 |     15 |
+|    10000 | "      |     64 |     50 |
+|   100000 | "      |    548 |    449 |
+|  1000000 | "      |   7471 |   6579 |
+| 10000000 | "      | 186267 | 174063 |
+
+Donc c'est clair pas besoin de cluster/analyze !
+
+

@@ -1,0 +1,22 @@
+
+Type conversion used (MySQL to PostgreSQL)
+
+# "bigint(20) NOT NULL," => "bigint,"
+# "char(34) DEFAULT NULL," => "text,"
+# "smallint(6) DEFAULT NULL," => "smallint,"
+# float => real
+# int(11) => bigint
+# tinyint(4) => smallint
+# double => double precision
+
+On all pools and master :
+
+CREATE FUNCTION fluxToAbMag(flux real)
+RETURNS real
+AS
+$code$
+BEGIN
+   RETURN -2.5 * log(flux) -48.6 ;
+END;
+$code$
+LANGUAGE PLPGSQL ;

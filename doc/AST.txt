@@ -1,0 +1,236 @@
+
+AST data structures
+
+* SQL selection statement
+
+    (define-record-type :sql-record
+      (sql-record select from where group-by order-by limit)
+      sql-record?
+      (select    sql-record->select)
+      (from      sql-record->from)
+      (where     sql-record->where)
+      (group-by  sql-record->group-by)
+      (order-by  sql-record->order-by)
+      (limit     sql-record->limit))
+
+* Projection
+
+    (define-record-type :projection
+      (projection distinct? fields)
+      projection?
+      (distinct? projection->distinct?)
+      (fields projection->fields))
+
+* Field and field aliases
+
+    (define-record-type :field
+      (field table column)
+      field?
+      (table field->table)
+      (column field->column))
+
+    (define-record-type :alias
+      (make-alias name value)
+      alias?
+      (name  alias->name)
+      (value alias->value))
+
+* Control
+
+    (define-record-type :case-expr
+      (case-expr case-clauses-list else-clause)
+      case-expr?
+      (case-clauses-list  case-expr->case-clauses-list)
+      (else-clause        case-expr->else-clause))
+    
+    (define-record-type :case-value
+      (case-value expr case-clauses-list else-clause)
+      case-value?
+      (expr  case-value->expr)
+      (case-clauses-list  case-value->case-clauses-list)
+      (else-clause        case-value->else-clause))
+    
+    (define-record-type :case-clause
+      (case-clause predicate expr)
+      case-clause?
+      (predicate  case-clause->predicate)
+      (expr       case-clause->expr))
+    
+    (define-record-type :else-clause
+      (else-clause expr)
+      else-clause?
+      (expr  else-clause->expr))
+
+* Tables
+
+    (define-record-type :table-record
+      (table-record database name)
+      table-record?
+      (database table-record->database)
+      (name table-record->name))
+
+    (define-record-type :join-table-using
+      (join-table-using type left-table right-table join-fields)
+      join-table-using?
+      (type         join-table-using->type)
+      (left-table   join-table-using->left-table)
+      (right-table  join-table-using->right-table)  
+      (join-fields  join-table-using->join-fields))
+
+    (define-record-type :cartesian-product
+      (cartesian-product table-list)
+      cartesian-product?
+      (table-list cartesian-product->tables))
+
+    (define-record-type :join-table-on
+      (join-table-on type left-table right-table predicate)
+      join-table-on?
+      (type join-table-on->type)
+      (left-table  join-table-on->left-table)
+      (right-table join-table-on->right-table)
+      (predicate   join-table-on->predicate))
+
+    (define-record-type :table-combinator
+      (table-combinator table list-of-table-combinators)
+      table-combinator?
+      (table    table-combinator->table)
+      (list-of-table-combinators table-combinator->list-of-table-combinators))
+      
+    (define-record-type :table-combinator-partial
+      (table-combinator-partial combinator table)
+      table-combinator-partial?
+      (combinator    table-combinator-partial->combinator)
+      (table         table-combinator-partial->table))
+
+* Tokens
+
+    (define-record-type :string-token
+      (string-token str)
+      string-token?
+      (str string-token->string))
+  
+* Arithmetic 
+
+    (define-record-type :parenthesised-expression
+      (parenthesised-expression expr)
+      parenthesised-expression?
+      (expr  parenthesised-expression->expr))
+
+    (define-record-type :arithmetic
+      (arithmetic first-expr rest-expr)
+      arithmetic?
+      (first-expr  arithmetic->first-expr)
+      (rest-expr   arithmetic->rest-expr))
+
+    (define-record-type :partial-arithmetic
+      (partial-arithmetic operation expr)
+      partial-arithmetic?
+      (operation  partial-arithmetic->operation)
+      (expr       partial-arithmetic->expr))
+
+    (define-record-type :unary-arithmetic
+      (unary-arithmetic unary-op expr)
+      unary-arithmetic?
+      (unary-op   unary-arithmetic->unary-op)
+      (expr       unary-arithmetic->expr))
+
+* Function call  
+
+    (define-record-type :function-call
+      (function-call function arguments)
+      function-call?
+      (function  function-call->function)
+      (arguments function-call->arguments))
+
+* Output modifiers (sorting, truncating, grouping)
+
+    (define-record-type :order-by
+      (order-by direction fields)
+      order-by?
+      (direction  order-by->direction)
+      (fields     order-by->fields))
+
+    (define-record-type :sql-limit
+      (sql-limit number)
+      sql-limit?
+      (number  sql-limit->number))
+
+    (define-record-type :group-by
+      (group-by fields having)
+      group-by?
+      (fields  group-by->fields)
+      ;; having = predicate or #t
+      (having  group-by->having))
+
+* Predicates
+
+    (define-record-type :predicate
+      (predicate first-expr rest-expr)
+      predicate?
+      (first-expr  predicate->first-expr)
+      (rest-expr   predicate->rest-expr))
+
+    (define-record-type :partial-predicate
+      (partial-predicate logic-operation predicate)
+      partial-predicate?
+      (logic-operation  partial-predicate->logic-operation)
+      (predicate        partial-predicate->predicate))
+
+    (define-record-type :between-predicate
+      (between-predicate expr left-bound right-bound)
+      between-predicate?
+      (expr         between-predicate->expr)
+      (left-bound   between-predicate->left-bound)
+      (right-bound  between-predicate->right-bound))
+
+    (define-record-type :negation-predicate
+      (negation-predicate predicate)
+      negation-predicate?
+      (predicate  negation-predicate->predicate))
+
+    (define-record-type :set-predicate
+      (set-predicate expr set-of-values)
+      set-predicate?
+      (expr           set-predicate->expr)
+      (set-of-values  set-predicate->set-of-values))
+
+    (define-record-type :comparison
+      (comparison comparator left-expr right-expr)
+      comparison?
+      (comparator  comparison->comparator)
+      (left-expr   comparison->left-expr)
+      (right-expr  comparison->right-expr))
+
+    (define-record-type :like-operator
+      (like-operator expr not? pattern)
+      like-operator?
+      (expr     like-operator->expr)
+      (not?     like-operator->not?)
+      (pattern  like-operator->pattern))
+
+    (define-record-type :is-null-record
+      (is-null-record field not?)
+      is-null-record?
+      (field  is-null-record->field)
+      (not?   is-null-record->not?))
+
+    (define-record-type :any-record
+      (any-record subquery)
+      any-record?
+      (subquery  any-record->subquery))
+    
+    (define-record-type :all-record
+      (all-record subquery)
+      all-record?
+      (subquery  all-record->subquery))
+
+    (define-record-type :some-record
+      (some-record subquery)
+      some-record?
+      (subquery  some-record->subquery))
+
+    (define-record-type :exists-record
+      (exists-record subquery)
+      exists-record?
+      (subquery  exists-record->subquery))
+  

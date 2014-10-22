@@ -1,0 +1,49 @@
+
+"ITM: In(to) The Midst"
+
+The aim of this  development project is to produce
+an extensible  tool to build  federated databases,
+with Scheme as a  scripting language.  It has been
+originally  created  as a  research  tool for  the
+PETASKY project to  experiment with the processing
+of large astronomical databases.
+
+This tool is a database mediator.  Some very large
+tables are  partitioned across many  databases and
+are presented to the  user as a single table.  ITM
+rewrites user query to obtain an execution plan to
+be executed on a set of databases.
+
+
+Features:
+
+- Easily extensible grammar system (used to extend
+  SQL with CROSSMATCH operator)
+
+- Query  rewriting  engine  to efficiently  handle
+  joins between partitioned tables
+
+- Rewriting rules to handle geometric queries such
+  as spatial joins
+
+- The  plan   obtained  could  be   executed  with
+  Postgres databases
+
+  
+TODO:
+
+- Use  library  (as  Q3C)  to speed  up  geometric
+  computation  (but FDW  disallow  use of  foreign
+  functions)
+
+- Type system for tables and their columns
+
+ 
+
+In the spirit of:
+
+``A Digital Orrery,'' James Applegate, M. Douglas, Y. Gursel, P Hunter, C. Seitz, Gerald Jay Sussman, in IEEE Transactions on Computers, C-34, No. 9, pp. 822-831, September 1985, reprinted in Lecture Notes in Physics #267 -- Use of supercomputers in stellar dynamics, Springer Verlag, 1986.
+
+``The Dynamicist's Workbench I: Automatic preparation of numerical experiments,'' Hal Abelson and Gerald Jay Sussman, in Symbolic Computation: Applications to Scientific Computing, R. Grossman (ed.), Frontiers in Applied Mathematics, vol. 5, Society for Industrial and Applied Mathematics, Philadephia, 1989.
+http://hdl.handle.net/1721.1/6470
+

@@ -1,0 +1,126 @@
+
+itm  is an  interpreter of  Scheme expression  extended with
+functions to read/analyze/rewrite/plan/execute SQL queries.
+
+itm starts a read-eval-print loop waiting for user commands.
+
+ITM> (+ 1 2 3 4)
+10
+
+You could define and access variables:
+
+ITM> (define pi (acos -1.))
+
+ITM> pi
+3.141592653589793
+
+as well as functions:
+
+ITM> (define (degree->radians x) (* x (/ pi 180)))
+
+ITM> (degree->radians 90) 
+1.5707963267948966
+
+You  could define  your database  schema and  pools. Default
+example configuration could be loaded like this:
+
+ITM> (load "scheme-sql/description.scm")
+
+This  one is a  function to  plan and  execute a  query with
+timing informations:
+
+(define (query-execute sql output)
+  (let* ((master-pool (pool "master" "localhost" 5280 "postgres" "postgres"))
+         (myplan (planner
+                  master-pool
+                  database-schema
+                  external-table->local-name
+                  sql output))
+         (query-plan (car myplan))
+         (cleanup-plan (cadr myplan)))
+    (time (execute query-plan))
+    (time (execute cleanup-plan))))
+
+ITM> (query-execute
+ "SELECT * FROM Source WHERE objectId = 439508298372785 ;"
+ "RESULT_001")
+
+The result is available as a table on the master database:
+
+postgres=# select count(*) from result_001 ;
+ count 
+-------
+    43
+(1 row)
+
+Beware  that result table  fields should  be named
+(for example "COUNT(*) as c")
+
+You could also load your code from a file:
+
+ITM> (load "scheme-sql/LSST_Q001.scheme-sql")
+...
+    261 ms real time
+
+And obtain the result as a table in the master database:
+
+postgres=# select * from t_lsst_001 ;
+   taimidpoint    |     psfflux      | psffluxsigma 
+------------------+------------------+--------------
+ 51111.0483914166 | 1621.29552039577 |      119.585
+ 51111.0548144166 | 2044.39731482253 |      140.072
+ 51111.0304774167 | 2151.60460962612 |       152.64
+ 51102.0644664167 | 2109.84010041257 |      140.926
+ 51102.0847364166 |  2235.7815375258 |      145.587
+(5 rows)
+
+
+Use (exit) to quit the interpreter
+
+
+
+Available functions for SQL:
+
+*  (sql->ast sql)
+
+Translates  a SQL  string to  an abstract  syntax  tree used
+internally for syntactic transformations.
+
+*  (rewriter sql)
+
+Rewrites a SQL string to a query on all pools
+
+*  (planner master-pool sql output)
+
+Creates a  plan from  the SQL  query sql to  be stored  in a
+table on the master database name output. The plan is a list
+of 2 elements, a query  plan and a cleanup plan. The cleanup
+plan should be  executed after the query plan  to delete all
+temporary tables.
+
+*  (execute query-plan)
+
+Executes a plan obtained from planner function.
+
+
+
+SQL Extensions:
+
+*  CROSSMATCH
+
+SELECT O1.objectId AS o1, 
+       O2.objectId AS o2
+FROM   Object O1,                                   
+       Object O2
+CROSSMATCH (O1, ra_PS, decl_PS)
+       AND (O2, ra_PS, decl_PS)
+WITH RADIUS .002778
+WHERE ..."
+
+is equivalent to the constraint:
+
+distance(O1.ra_PS,O1.decl_PS,O2.ra_PS,O2.decl_PS) <= .002778
+
+by using this extension a specific transformation is used to
+parallelise the query on all partitions.
+

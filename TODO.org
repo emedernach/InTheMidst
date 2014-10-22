@@ -1,0 +1,114 @@
+
+ IN THE MIDST (ITM)
+
+* TODO Compilation problem with Gambit version 4.7.*
+
+  *** ERROR IN | list| -- Operator is not a PROCEDURE
+  (#!unbound
+   '#(syntax-object fold ((top) #(ribcage #(fold) #((top)) #(fold))))
+   '(global . fold)
+   '*top*)
+
+* TODO Dynamic creation of Border tables
+
+make-boundary.sh is  a script creating border  tables but it
+has default values for spatial partitions.
+
+TODO:  write PLSQL functions  to create  borders dynamically
+from a description instead  of having values directly in the
+script.
+
+* TODO Cone search with other predicates
+
+When a cone search  is done with other predicates,
+the execution engine externalizes queries with the
+other predicates  to the pools, but  then the cone
+search is slow  because the resulting cache tables
+are not indexed.
+
+We could index the cache table with x,y,z index if
+needed afrter cache table creation.
+
+* TODO Execution engine more robust
+
+If a thread crashes the whole execution crashes with an
+unhandled exception error, and cache tables need to be
+cleanup (it could be done manually after a crash with the
+cleanup script)
+
+* TODO make-boundary.sh
+
+Take borders as parameters instead of listing them in the script
+
+* TODO Announcement
+
+* TODO Documentation
+
+* TODO Benchmark sur 1 + 4 pools
+
+* TODO Table type management
+
+Table type management needs to be redone 
+
+* TODO Pool Thread Management
+
+Currently a  thread is started for each  external query.  In
+order to decrease master and pools load we may have for each
+pool a dedicated number of threads.
+
+Pool_1: K threads
+Pool_2: K threads
+...
+
+And to distribute the  external queries to the corresponding
+pool number in a query queue.
+
+This method  would also allow to easily  replicate pools and
+to  load balance  between them,  and even  to fallback  to a
+replica if one pool crash.
+
+* TODO Use Cube extension when possible
+
+Because of  FDW we  cannot use special  index like
+SPGIST  or the  cube extension.   But  as external
+queries are  sent directly to  the pool we  may in
+that case  use the  cube (or Q3C)  extension.  The
+problem is that if it  is not an external query we
+cannot use cube nor Q3C.
+
+* TODO Density Estimation function
+
+Astronomers sometimes need to estimate the density:
+
+http://en.wikipedia.org/wiki/Density_estimation
+http://en.wikipedia.org/wiki/Kernel_density_estimation
+http://en.wikipedia.org/wiki/Kernel_%28statistics%29
+
+See also query 025 which is based on a density computation
+
+* TODO Sampling
+
+Provide  an  UDF  for  random  sampling.   Queries
+currently use modulo sampling  such as: 
+"id % .. = 0"
+
+* TODO Near Neighbors
+
+Search nearest neighbor of a given point
+
+
+
+
+* TODO Write tests for rewriters
+
+This  is   not  trivial   as  we  have   to  check
+equivalence  between the  original  query and  the
+result.
+
+* TODO Problem with aliases during Join rewriting
+* TODO Add a cost model to choose between many distributed execution plans
+ 
+* DONE Random points on the sphere
+
+See UDF/randomsphere.sql
+

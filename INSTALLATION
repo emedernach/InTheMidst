@@ -1,0 +1,31 @@
+
+PREREQUISITE:
+
+Gambit-C Scheme programming system is available from:
+http://dynamo.iro.umontreal.ca/wiki/index.php/Distributions
+
+Note: Problem compiling with gambit version 4.7.* :
+*** ERROR IN | list| -- Operator is not a PROCEDURE
+(#!unbound
+ '#(syntax-object fold ((top) #(ribcage #(fold) #((top)) #(fold))))
+ '(global . fold)
+ '*top*)
+
+Please use gambit version 4.6.* for the moment. 
+
+
+FDW enabled Postgres installation (at least 9.3):
+http://www.postgresql.org/download/
+
+
+COMPILATION:
+
+You need to change this variables in the Makefile to suits you system:
+
+GAMBITDIR = /opt/scheme/gambit/4.6.9
+POSTGRESDIR = /opt/postgresql/9.3beta2
+
+Then:
+$ make clean all
+
+

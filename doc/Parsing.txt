@@ -1,0 +1,199 @@
+
+For code see parser.dir/
+
+References:
+- Based on the "Parser Combinators" idea
+- "Lexer and Parser Generators in Scheme" Scott Owens, Matthew Flatt, Olin Shivers, Benjamin McMullan
+- "Higher-Order Functions for Parsing". Graham Hutton in Journal of Funct. Program. 2(3): 323-343 (1992)
+- "Synthesizing Object-Oriented and Functional Design to Promote Re-Use" Shriram Krishnamurthi, Matthias Felleisen, Daniel P. Friedman in European Conference on Object-Oriented Programming, 1998
+
+We provide functions/macros able to help creating grammar in
+Backus-Norm Form (BNF). Both recognizers and parser could be
+written.   A recognizer is  a function  taking a  string and
+returning false if  the string conforms to the  grammar or a
+list  of tokens  if  this is  the  case.  A  parser is  more
+powerful  and  allows  to  make  arbitrary  transformations,
+resulting in producing an Abstract Syntax Tree (AST).
+
+From our point  of view a grammar (recognizer  or parser) is
+mainly a  function and  we create new  grammars by  means of
+compositions.  For  instance we could  take a grammar  G and
+create  a   new  grammar  COMMA-LIST-OF-G   which  is  comma
+separated values of G.
+
+To  illustrate the ease  of using  our framework  suppose we
+want to add the SQL  "LIKE" operator in our grammar. This is
+how we added it:
+
+    (define <PREDICATE-EXPR>
+    ...
+       (BNF-sequence-transformer
+        like-transformer
+        <FIELD-EXPR>
+        (BNF-string-drop "LIKE")
+        <STRING>)
+    ... )
+    
+    (define-record-type :like-operator
+      (like-operator expr pattern)
+      like-operator?
+      (expr     like-operator->expr)
+      (pattern  like-operator->pattern))
+    
+    (define (like-transformer field-expr str)
+      (like-operator field-expr str))
+
+      
+A grammar is a function taking 3 parameters:
+- a list of tokens
+- a success function
+- a failure function
+
+Tokens are mainly strings but other types could be used.
+
+When a match is found the grammar calls the success function
+with 3 parameters:
+- a list of recognized tokens
+- a list of remaining tokens
+- a fallback function
+
+The fallback  function is called to return  another match if
+there are any.
+
+
+Grammars are built from simple grammars such as:
+
+-- grammar: empty-parser
+
+   Grammar which recognizes the empty list of tokens.
+
+-- grammar: BNF-any
+
+   Grammar which recognizes a single token, whatever it is.
+
+-- macro: BNF-string string
+
+   produces a grammar  recognizing only the specified string
+   as a single token. This one is case insensitive.
+
+-- macro: BNF-string-case-sensitive string
+
+   produces a grammar  recognizing only the specified string
+   as a single token. This one is case sensitive.
+
+-- procedure: BNF-type predicate
+
+   produces a  grammar which  recognizes a single  token tok
+   for which (predicate tok) is true.
+
+
+We provide ways to compose and create new grammars:
+
+-- macro: BNF-sequence <grammar> ...
+
+   produces a grammar which recognizes a list of tokens as a
+   sequence of <grammar>. For instance:
+
+   (BNF-sequence (BNF-string "abc") (BNF-string "xyz"))
+
+   recognizes the  grammar composed of  2 consecutive tokens
+   '("abc" "xyz").
+
+-- macro: BNF-alternative <grammar> ...
+
+   produces a grammar which recognizes one of the <grammar>.
+
+-- macro: BNF-kleene-star <grammar>
+
+   produces a  grammar which recognizes  a sequence of  0 or
+   more <grammar>.
+
+-- macro: BNF-optional <grammar>
+
+   produces  a  grammar  which  recognizes either  an  empty
+   grammar or <grammar>.
+
+
+A  BNF  transformer acts  as  a  grammer  which is  able  to
+transform its input.
+
+-- macro: BNF-optional-transformer <parser> <empty value>
+
+   produces  a BNF  transformer which  recognizes  either an
+   empty list of token and transforms it to <empty value> or
+   executes  <parser>.  This  is  useful to  handle  default
+   values, for instance:
+
+   (BNF-optional-transformer <JOIN-TABLE-TYPE> 'INNER)
+
+   return  the INNER  symbol if  the  kind of  JOIN type  is
+   omitted.
+
+-- procedure: BNF-type-transformer predicate transform
+
+   produces  a BNF  transformer which  when it  encounters a
+   token  tok  for which  (predicate  tok)  is true  returns
+   (transform tok).
+
+-- macro: BNF-string-drop string
+
+   produces  a BNF transformer  which recognizes  the string
+   and drops it. This is useful to drop unwanted syntax.
+
+-- macro:  BNF-string-replace string val
+
+   produces  a BNF transformer  which recognizes  the string
+   and replaces it with val.
+
+-- macro: BNF-string->symbol string
+
+   produces  a BNF transformer  which recognizes  the string
+   and replaces it with (string->symbol string)
+
+-- macro: BNF-sequence-transformer <transform> <parser> <other> ...
+
+   produces a BNF transformer which recognizes a sequence of
+   parsers and apply <transform> to the result. For instance:
+
+    ((BNF-sequence-transformer + (BNF-kleene-star (BNF-type number?)))
+     '(1 2 3 4 5 6)
+     match-if-nothing-remains
+     (lambda () 'failure))
+
+   returns '(21)
+
+-- macro: BNF-kleene-star-transformer <zero> <transform> <parser>
+
+   produces a BNF transformer which recognizes a sequence of
+   zero  or more  <parser>  and then  fold  the result  with
+   <zero> and <transform>. For instance:
+
+   ((BNF-kleene-star-transformer
+      '() cons
+      (BNF-sequence
+       (BNF-string-drop ",")
+       (BNF-string "a")))
+     '("," "a" "," "a" "," "a")
+     Ok-only-if-empty
+     (lambda () 'failure))
+
+   returns '(success (("a" "a" "a")))
+
+
+We provide useful examples such as:
+
+-- procedure: <COMMA-LIST-TRANSFORMER> parser
+
+  () => ()
+  (a) => (a)
+  (a , b) => (a b)
+  (a , b , c) => (a b c)
+
+
+
+  
+
+   
+
+   
+   

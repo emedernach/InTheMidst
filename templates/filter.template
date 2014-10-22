@@ -1,0 +1,4 @@
+filterId smallint NOT NULL,
+filterName text NOT NULL,
+photClam real NOT NULL,
+photBW real NOT NULL

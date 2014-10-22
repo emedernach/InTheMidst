@@ -1,0 +1,111 @@
+
+* execution.dir
+
+** cachetable.scm
+
+External queries  are materialised on remote  pool in a
+table used  as a result  cache.  These tables  are then
+accessed  by FDW.   This is  done to  avoid performance
+issue with  FDW and  to create a  distributed execution
+plan.
+
+On pools:
+ CREATE TABLE <LOCAL CACHE TABLE> 
+ AS <QUERY> ;
+
+On the master:
+ CREATE FOREIGN TABLE <FOREIGN CACHE TABLE> ( 
+   <TYPE> 
+   ... 
+ ) SERVER <POOL> 
+   OPTION ( TABLE_NAME <LOCAL CACHE TABLE> ) ;
+
+** describe.scm
+
+Foreign tables  creation need knowledge  of table types
+(columns names of a  given query). A function is needed
+to obtain the columns name and their types from a given
+SQL query.
+
+Beware  of anonymous  or duplicate  columns in  the SQL
+query as this prevents the remote table creation.
+
+** execute.scm
+
+An execution plan is  a structure describing actions to
+be  done.  Actions  are  SQL queries  with  their  pool
+location.
+
+These actions may be either:
+- sequential:  (sequential <plan> ...)
+- parallel:    (parallel <plan> ...)
+
+SQL execution is done asynchronously.
+
+** externalquery.scm
+
+Definition: A  subquery is an external one  if and only
+if it could be executed as it is on the remote pool.
+
+A subquery is an external query if we have:
+- all its tables on the same pool
+- there is no references to free variables
+
+For instance, this subquery is not external because of O1:
+SELECT * FROM Object O1, Object O2
+WHERE (SELECT count(*) FROM Source S 
+       WHERE O1.objectid = S.objectid) > 100 ;
+
+This one is made of 2 external queries: 
+SELECT * FROM Source S1
+WHERE objectid = 1234 
+UNION ALL
+SELECT * FROM Source S2
+WHERE objectid = 1234 ;
+
+We search  in the  rewrited query for  maximal external
+queries. Then  we replace these queries  with a foreign
+table and we create this foreign table on the pool .
+
+** framedef.scm
+
+Frames are  used to determine subqueries  type. A frame
+describes the set of reachable variables from a lexical
+point.
+
+** frame.scm
+
+This file defines operations on frames:
+- Search a table name in a frame
+- Search a column name in a frame
+- Obtain all columns and their types
+
+** freevar.scm
+
+Search all free variables in a subquery.
+
+** from.scm
+
+Creates a frame from a FROM clause.
+
+** parallel.scm
+
+Executes a list of plans in parallel (with one thread per plan for the moment).
+
+** placeholder.scm
+
+A  placeholder  defines a  hole  in  a  subquery to  be
+replaced later.  Placeholders have an  identity to find
+them.
+
+** plan.scm
+
+A  plan is  a recursive  data structure  describing all
+action steps to be executed.
+
+plan ::= (sequential-plan plan ...) |
+         (parallel-plan plan ...)   |
+         (action sql pool)
+
+The  scheduler  takes a  query,  extracts all  external
+subqueries and creates an execution plan.

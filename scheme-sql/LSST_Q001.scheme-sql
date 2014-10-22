@@ -1,0 +1,23 @@
+
+;; Scheme SQL
+
+(define master-pool (pool "master" "localhost" 5280 "postgres" "postgres"))
+
+(define (query-execute sql output)
+  (let* ((myplan (planner master-pool sql output))
+         (query-plan (car myplan))
+         (cleanup-plan (cadr myplan)))
+    (time (execute query-plan))
+    (time (execute cleanup-plan))))
+
+(define LSST_query_001
+  "SELECT taiMidPoint, psfFlux, psfFluxSigma
+FROM   Source
+JOIN   Filter USING (filterId)
+WHERE  objectId = 430209694171929
+   AND filterName = 'i'")
+
+(time (query-execute LSST_query_001 "T_LSST_001"))
+
+;; First time: 2208 ms
+;; Next time (even for a different objectId): 261 ms

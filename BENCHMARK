@@ -1,0 +1,926 @@
+
+* Results
+
+PT12, 1  master, 4 pools as  virtual machines (but
+all on the same disk)
+
+Cleanup  times  are  time  to drop  all  temporary
+tables.  Please  notice that  this  could be  done
+asynchronously.
+
+| Query                     | First Time  | Cleanup | Comments                                            |
+|                           |             |         |                                                     |
+| basic_query_001           | 14821 ms    | 0       | Postgres is known to be slow on count(*) queries    |
+| basic_query_002           | 1350 ms     | 858 ms  |                                                     |
+| basic_query_003           | 420 ms      | 827 ms  |                                                     |
+| basic_query_004           | 337 ms      | 833 ms  |                                                     |
+| basic_query_004_b         | 399 ms      | 829 ms  |                                                     |
+| basic_query_005           | 901 ms      | 1644 ms |                                                     |
+| basic_query_006           | 23114 ms    | 0       |                                                     |
+| basic_query_007           | 313 ms      | 824 ms  |                                                     |
+| basic_query_008           | 1491 ms     | 834 ms  |                                                     |
+| basic_query_009           | 1343632 ms  | 0       | count(*) again                                      |
+|                           |             |         |                                                     |
+| LSST_query_001_a          | 1030 ms     | 863 ms  |                                                     |
+| LSST_query_003            | 1196 ms     | 830 ms  |                                                     |
+| LSST_query_004            | 5734 ms     | 826 ms  |                                                     |
+| LSST_query_006_adapted_a  | 1114 ms     | 842 ms  |                                                     |
+| LSST_query_008            | 1282 ms     | 824 ms  |                                                     |
+| LSST_query_009            | 777 ms      | 832 ms  |                                                     |
+| LSST_query_014            | 1132 ms     | 830 ms  |                                                     |
+| LSST_query_015_adapted    | 34331 ms    | 827 ms  |                                                     |
+| LSST_query_018            | 766 ms      | 829 ms  | Empty result on PT12                                |
+| LSST_query_020            | 69954 ms    | 3331 ms |                                                     |
+| LSST_query_022            | > 15 min    | -       | Without CROSSMATCH                                  |
+| LSST_query_022_crossmatch | 273958 ms   | 857 ms  |                                                     |
+| LSST_query_053_adapted    | 1247 ms     | 826 ms  |                                                     |
+| LSST_query_055_adapted    | 578 ms      | 827 ms  |                                                     |
+|                           |             |         |                                                     |
+| Perf_Q3_adapted           | 14667310 ms | 967 ms  | These 5 VMs are slower than my PC !                 |
+| Perf_Q4_adapted           | 7693226 ms  | 7081 ms |                                                     |
+| Perf_Q5_adapted           | 34826 ms    | 1561 ms |                                                     |
+| Perf_Q7_adapted           | 11112 ms    | 831 ms  |                                                     |
+| Query022_crossmatch       | 266565 ms   | 855 ms  |                                                     |
+| LV1_250NodeTestPlan       | 537 ms      | 835 ms  |                                                     |
+| LV1_250NodeTestPlan_a     | 424 ms      | 822 ms  |                                                     |
+| LV1_250NodeTestPlan_b     | 431 ms      | 824 ms  |                                                     |
+| LV2_250NodeTestPlan       | 411 ms      | 829 ms  |                                                     |
+| LV3_250NodeTestPlan       | 1362 ms     | 829 ms  |                                                     |
+| HV1_250NodeTestPlan       | 33403 ms    | 0       | count(*) again                                      |
+| HV3_250NodeTestPlan       | 40488 ms    | 0       |                                                     |
+| LV2_IN2P3_300             | 1123 ms     | 830 ms  |                                                     |
+| LV3_IN2P3_300             | 702 ms      | 829 ms  |                                                     |
+| LV4_IN2P3_300_a           | 683 ms      | 825 ms  | names in join usupported (o and s removed)          |
+| HV2_IN2P3_300             | 578 ms      | 824 ms  |                                                     |
+| HV3_IN2P3_300             | 3690 ms     | 825 ms  |                                                     |
+| HV4_IN2P3_300             | 6245 ms     | 824 ms  |                                                     |
+| HV5_IN2P3_300             | 171124 ms   | 1820 ms |                                                     |
+| HV6_IN2P3_300_crossmatch  | 3902968 ms  | 1045 ms | Radius 0.01                                         |
+|                           |             |         |                                                     |
+| Q1_OptimalPartitionSize   | 521338 ms   | 0       |                                                     |
+| Q2_OptimalPartitionSize   | 56484 ms    | 8044 ms |                                                     |
+| ConeSearch_Query_001      | 2374 ms     | 827 ms  |                                                     |
+
+
+
+
+* Installation
+
+** Prerequis:
+
+On master and pools:
+yum -y install gcc bison flex zlib-devel readline-devel openssl-devel
+
+** Postgres 9.3.5
+
+On master and pools:
+
+mkdir -p src/external/postgres
+cd src/external/postgres
+wget http://ftp.postgresql.org/pub/source/v9.3.5/postgresql-9.3.5.tar.bz2
+tar -jxvf postgresql-9.3.5.tar.bz2
+cd postgresql-9.3.5
+./configure --prefix=/opt/postgresql/9.3.5 --with-openssl --with-gnu-ld
+gmake -k -j 2
+gmake check
+gmake install
+
+Add /opt/postgresql/9.3.5/bin/ in PATH :
+Fichier ~/.bashrc
+
+export PATH=${PATH}:/opt/postgresql/9.3.5/bin/
+alias pg='psql -p 5280 -U postgres'
+
+mkdir ~/bin/
+cat > ~/bin/pg_control.sh << EOF
+#!/bin/bash
+
+# Usage: pg_control.sh [start|stop]
+
+PORT=5280
+
+DBPATH=/data/databases/postgresql/pg9.3/data/
+LOGFILE=/data/databases/postgresql/pg9.3/log/logfile
+
+/opt/postgresql/9.3.5/bin/pg_ctl \$1 \$2 -w -D \${DBPATH} -l \${LOGFILE} -o "-p \${PORT}"
+
+EOF
+
+chmod +x ~/bin/pg_control.sh 
+
+mkdir -p /data/databases/postgresql/pg9.3/
+mkdir -p /data/databases/postgresql/pg9.3/log/
+export PATH=${PATH}:/opt/postgresql/9.3.5/bin/
+initdb -D /data/databases/postgresql/pg9.3/data/
+~/bin/pg_control.sh start
+
+** Autorisation connection from master to pools
+
+On pools:
+
+Dans le fichier /data/databases/postgresql/pg9.3/data/postgresql.conf
+Rajouter cette ligne:
+listen_addresses='*'
+
+File /data/databases/postgresql/pg9.3/data/pg_hba.conf
+
+host all postgres 193.48.81.96/26 trust
+
+En root: Open port in firewall (/etc/sysconfig/iptables)
+
+-A INPUT -m state --state NEW -m tcp -p tcp -s 193.48.81.96 --dport 5280 -j ACCEPT
+
+service iptables restart
+
+** Postgres Tuning
+
+cd ~/src/external/
+wget http://pgfoundry.org/frs/download.php/2449/pgtune-0.9.3.tar.gz
+tar -zxvf pgtune-0.9.3.tar.gz 
+cd pgtune-0.9.3
+PGDATA=/data/databases/postgresql/pg9.3/data/
+./pgtune -i $PGDATA/postgresql.conf -o $PGDATA/postgresql.conf.pgtune
+mv $PGDATA/postgresql.conf $PGDATA/postgresql.conf.orig
+mv $PGDATA/postgresql.conf.pgtune $PGDATA/postgresql.conf
+~/bin/pg_control.sh stop
+~/bin/pg_control.sh start
+
+
+** Script on the master
+
+Add in ~/.bashrc (postgres and benchmark users) :
+
+alias pg_pool1='psql -p 5280 -h 193.48.81.97  -U postgres'
+alias pg_pool2='psql -p 5280 -h 193.48.81.98  -U postgres'
+alias pg_pool3='psql -p 5280 -h 193.48.81.99  -U postgres'
+alias pg_pool4='psql -p 5280 -h 193.48.81.100 -U postgres'
+
+** Gambit Scheme
+
+En root:
+
+mkdir /opt/scheme/
+chown benchmark: /opt/scheme/
+
+En tant que l'utilisateur benchmark:
+
+PS: il faut la version 4.6.9 et non la 4.7.3 !
+
+mkdir -p src/external
+cd src/external
+wget http://www.iro.umontreal.ca/~gambit/download/gambit/v4.6/source/gambc-v4_6_9.tgz
+tar -zxvf gambc-v4_6_9.tgz
+cd gambc-v4_6_9
+./configure --prefix=/opt/scheme/gambit/4.6.9/ --enable-single-host --enable-inline-jumps --enable-gcc-opts --enable-shared
+gmake -k 
+gmake check
+gmake install
+
+Dans .bashrc:
+
+export PATH=${PATH}:/opt/postgresql/9.3.5/bin/:/opt/scheme/gambit/4.6.9/bin/
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/scheme/gambit/4.6.9/lib/
+
+** Postgres Extension FDW 
+
+As postgres user on the master:
+
+cd src/external/postgres/postgresql-9.3.5/contrib/postgres_fdw
+make
+make install
+
+# In postgres:
+
+pg
+
+postgres=# CREATE EXTENSION postgres_fdw ;
+
+CREATE SERVER pool1
+  FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '193.48.81.97',  port '5280', dbname 'postgres');
+CREATE SERVER pool2
+  FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '193.48.81.98',  port '5280', dbname 'postgres');
+CREATE SERVER pool3
+  FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '193.48.81.99',  port '5280', dbname 'postgres');
+CREATE SERVER pool4
+  FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '193.48.81.100', port '5280', dbname 'postgres');
+
+CREATE USER MAPPING
+  FOR postgres SERVER pool1
+  OPTIONS ( user 'postgres', password '' );
+CREATE USER MAPPING
+  FOR postgres SERVER pool2
+  OPTIONS ( user 'postgres', password '' );
+CREATE USER MAPPING
+  FOR postgres SERVER pool3
+  OPTIONS ( user 'postgres', password '' );
+CREATE USER MAPPING
+  FOR postgres SERVER pool4
+  OPTIONS ( user 'postgres', password '' );
+
+List foreign servers :
+postgres=# \des
+
+Test:
+
+On pool1:
+CREATE TABLE table_1 AS
+  SELECT
+    generate_series(1,10) AS id,
+    generate_series(101,110) AS a;
+
+On master:
+CREATE FOREIGN TABLE master_table_1
+  (id int, a int) 
+  SERVER pool1
+  OPTIONS ( table_name 'table_1' );
+
+select * from master_table_1 ;
+ id |  a  
+----+-----
+  1 | 101
+  2 | 102
+  3 | 103
+  4 | 104
+  5 | 105
+  6 | 106
+  7 | 107
+  8 | 108
+  9 | 109
+ 10 | 110
+(10 rows)
+
+drop foreign table master_table_1 ;
+
+
+** Chunks listing  (partitions table on the master)
+
+./create_partitions.sh 'psql -p 5280 postgres -U postgres' 'zcat /data/databases/pt12.corrected/Object.csv.gz' ra_PS decl_PS 0.05 /home/benchmark/src/LambdaInTheSky.dir/templates/object.template
+
+** Fichiers CSV
+
+As postgres on the master:
+
+mkdir /data/databases/pt12.petasky
+cd /data/databases/pt12.petasky
+
+gzipped CSV data are kept in /data/databases/pt12.petasky
+
+
+** Foreign table creation
+
+As benchmark on the master:
+
+POOL1=193.48.81.97
+POOL2=193.48.81.98
+POOL3=193.48.81.99
+POOL4=193.48.81.100
+
+OBJECTTEMPLATE="${HOME}/src/LambdaInTheSky.dir/templates/object.template"
+SOURCETEMPLATE="${HOME}/src/LambdaInTheSky.dir/templates/source.template"
+
+PATH=${PATH}:/home/benchmark/src/LambdaInTheSky.dir/scripts/
+
+# Filter table creation on the master
+
+TABLE=Filter
+TABLE_TEMPLATE="${HOME}/src/LambdaInTheSky.dir/templates/filter.template"
+TABLE_CSV="/data/databases/pt12.corrected/Filter.csv"
+
+DBCLIENT="psql -p 5280 -U postgres"
+
+${DBCLIENT} <<EOF
+-- Table Creation
+
+DROP TABLE IF EXISTS ${TABLE} ;
+
+CREATE TABLE ${TABLE} (
+`cat ${TABLE_TEMPLATE}`
+) ;
+EOF
+
+${DBCLIENT} <<EOF
+-- Table loading
+
+COPY ${TABLE}
+FROM '${TABLE_CSV}'
+WITH ( FORMAT csv ) ;
+
+EOF
+
+
+while read IP SHARD 
+do
+ COMMAND="psql -p 5280 -h ${IP} -U postgres" 
+ create-table_xyz.sh "${COMMAND}" Object ${OBJECTTEMPLATE} ${SHARD}
+ create-table_xyz.sh "${COMMAND}" Source ${SOURCETEMPLATE} ${SHARD}
+
+# Local tables are used to populate remote tables
+
+ COMMAND="psql -p 5280 -U postgres" 
+ create-table_xyz.sh "${COMMAND}" local_Object ${OBJECTTEMPLATE} ${SHARD}
+ create-table_xyz.sh "${COMMAND}" local_Source ${SOURCETEMPLATE} ${SHARD}
+
+done <<EOF
+   ${POOL3}   001 
+   ${POOL1}   002 
+   ${POOL1}   003 
+   ${POOL4}   004 
+   ${POOL2}   005 
+   ${POOL3}   006 
+   ${POOL2}   007 
+   ${POOL4}   008 
+   ${POOL1}   009 
+   ${POOL2}   010 
+   ${POOL3}   011 
+   ${POOL3}   012 
+   ${POOL3}   013 
+   ${POOL1}   014 
+   ${POOL3}   015 
+   ${POOL4}   016 
+   ${POOL2}   017 
+   ${POOL3}   018 
+EOF
+
+make-master_xyz.sh  object ${OBJECTTEMPLATE}
+make-master_xyz.sh  source ${SOURCETEMPLATE}
+
+** Database population
+
+PATH=${PATH}:/home/benchmark/src/LambdaInTheSky.dir/scripts/
+
+time ./dataload.sh "zcat /data/databases/pt12.corrected/Object.csv.gz" 'psql -p 5280 -U postgres' object ~/src/LambdaInTheSky.dir/templates/object.template ra_PS decl_PS
+
+# real    206m40.019s
+# user    54m56.939s
+# sys     34m9.044s
+ 
+time ./dataload.sh "zcat /data/databases/pt12.corrected/Source.csv.gz" 'psql -p 5280 -U postgres' source ~/src/LambdaInTheSky.dir/templates/source.template raobject declobject
+
+# real    2829m10.764s
+# user    1250m34.951s
+# sys     602m12.787s
+
+** Index creation
+
+POOL1=193.48.81.97
+POOL2=193.48.81.98
+POOL3=193.48.81.99
+POOL4=193.48.81.100
+
+while read IP SHARD 
+do
+ COMMAND="psql -p 5280 -h ${IP} -U postgres" 
+
+ ./make-index.sh "${COMMAND}" ${SHARD} &
+
+done <<EOF
+   ${POOL3}   001 
+   ${POOL1}   002 
+   ${POOL1}   003 
+   ${POOL4}   004 
+   ${POOL2}   005 
+   ${POOL3}   006 
+   ${POOL2}   007 
+   ${POOL4}   008 
+   ${POOL1}   009 
+   ${POOL2}   010 
+   ${POOL3}   011 
+   ${POOL3}   012 
+   ${POOL3}   013 
+   ${POOL1}   014 
+   ${POOL3}   015 
+   ${POOL4}   016 
+   ${POOL2}   017 
+   ${POOL3}   018 
+EOF
+
+wait
+
+** Borders table creation
+
+COMMAND="psql -p 5280 postgres -U postgres"
+make-boundary.sh "${COMMAND}"
+
+Beware  that  this  code  contains  partitions  description,
+please adapt it to your needs.
+
+* Compilation
+
+make clean all
+
+Add in .bashrc:
+
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/postgresql/9.3.5/lib/
+
+* Benchmarks
+
+Note: The execution  engine is quite fragile and  we need to
+cleanup cache tables on the pool if something crash !
+
+./itm
+
+(load "scheme-sql/description.scm")
+
+;; We must name all fields as we create a result table on the master.
+(define basic_query_001 ;; Ok
+  "SELECT count(*) as c FROM Object;")
+
+(query-execute basic_query_001 "t_basic_query_001")
+
+(define basic_query_002 ;; Ok
+  "SELECT ra_PS, decl_PS 
+   FROM Object
+   WHERE ObjectId=402395485975435;")
+
+(query-execute basic_query_002 "t_basic_query_002")
+
+(define basic_query_003 ;; Ok
+  "SELECT ra, decl 
+   FROM Source
+   WHERE ObjectId=402395485975435;")
+
+(query-execute basic_query_003 "t_basic_query_003")
+
+(define basic_query_004 ;; Ok
+  "SELECT ra, decl 
+   FROM Source
+   WHERE sourceId=29759154665686604;")
+
+(query-execute basic_query_004 "t_basic_query_004")
+
+;; Petasky Q1 query
+(define basic_query_004_b ;; Ok
+  "SELECT * FROM Source
+   WHERE sourceId = 29706943633032196 ;")
+
+(query-execute basic_query_004_b "t_basic_query_004_b")
+
+(define basic_query_005 
+  "SELECT sourceId, ra_PS, decl_PS   
+   FROM Object
+   JOIN Source
+   USING(objectId)
+   WHERE ObjectId=402395485975435;")
+
+(query-execute basic_query_005 "t_basic_query_005")
+
+(define basic_query_006
+  "SELECT MIN(gFlux_PS) as gmin, MAX(gFlux_PS) as gmax FROM Object;")
+
+(query-execute basic_query_006 "t_basic_query_006")
+
+(define basic_query_007
+  "Select sourceId, taiMidPoint 
+  From Source 
+  Where objectid = 430209694172015
+    and scienceccdexposureid = 454490010310 ;")
+
+(query-execute basic_query_007 "t_basic_query_007")
+
+(define basic_query_008
+  "SELECT objectid, ra_ps, decl_sg From Object 
+WHERE ra_ps >= 1.0 AND ra_ps <= 2.0 
+  AND decl_sg >= 1.0 AND decl_sg <= 2.0;")
+
+(query-execute basic_query_008 "t_basic_query_008")
+
+
+(define basic_query_009
+  "SELECT objectId, COUNT(sourceid) as c
+FROM Source 
+GROUP BY objectId;")
+
+(query-execute basic_query_009 "t_basic_query_009")
+
+;;
+
+(define LSST_query_001_a ;; Ok
+  "SELECT taiMidPoint, psfFlux, psfFluxSigma
+FROM   Source
+JOIN   Filter USING (filterId)
+WHERE  objectId = 430209694171177
+   AND filterName = 'i'")
+
+(query-execute LSST_query_001_a "t_001")
+
+(define LSST_query_003
+  "SELECT  *
+FROM    Object
+WHERE   spatial_rectangle(ra_PS, decl_PS, 0.5, 2.8, 1.2, 3.7)
+   AND  gFlux_PS > 0
+   AND  rFlux_PS > 0
+   AND  iFlux_PS > 0
+   AND  zFlux_PS > 0
+   AND  fluxToAbMag(zFlux_PS)      BETWEEN 8.2  AND 24.5
+   AND  fluxToAbMag(gFlux_PS) - fluxToAbMag(rFlux_PS) BETWEEN -0.24 AND 0.35
+   AND  fluxToAbMag(iFlux_PS) - fluxToAbMag(zFlux_PS) BETWEEN -0.25 AND -0.15 ;")
+
+(query-execute LSST_query_003 "t_003")
+
+(define LSST_query_004
+  "SELECT fluxToAbMag(gFlux_PS) as g, 
+       fluxToAbMag(rFlux_PS) as r,
+       fluxToAbMag(iFlux_PS) as i,
+       fluxToAbMag(zFlux_PS) as z,
+       fluxToAbMag(yFlux_PS) as y
+FROM   Object 
+WHERE  gFlux_PS > 0
+  AND  rFlux_PS > 0 
+  AND  iFlux_PS > 0 
+  AND  zFlux_PS > 0 
+  AND  yFlux_PS > 0 
+  AND  (objectId  % 100 )= 42 ;")
+
+(query-execute LSST_query_004 "t_004")
+
+(define LSST_query_006_adapted_a
+  "SELECT ra, decl, raRange, declRange
+FROM   Object 
+JOIN   Source USING (objectId)
+WHERE  objectId = 383854112153684
+AND    latestObsTime = taiMidPoint;
+")
+
+(query-execute LSST_query_006_adapted_a "t_006")
+
+(define LSST_query_008
+  "SELECT objectId
+FROM   Object
+WHERE  spatial_rectangle(ra_PS, decl_PS, 1.5, 3.8, 2.2, 4.7)
+AND    zFlux_PS > 0
+AND    fluxToAbMag(zFlux_PS) BETWEEN 8.2  AND 24.5 ;")
+
+(query-execute  LSST_query_008 "t_008")
+
+(define LSST_query_009
+  "SELECT *
+FROM   Object
+WHERE  objectId = 417861663196448 ;")
+
+(query-execute LSST_query_009 "t_009")
+
+(with-output-to-file "/tmp/plan.txt"
+  (lambda ()
+    (planner 
+     master
+     database-schema
+     external-table->local-name
+     LSST_query_009
+     "t_009")))
+
+(define LSST_query_014
+  "SELECT objectId
+FROM   Object
+WHERE  spatial_rectangle(ra_PS, decl_PS, -0.5, -5.4, 0.5, -4.8)
+AND    iFlux_PS > 0
+AND    zFlux_PS > 0
+AND    fluxToAbMag(iFlux_PS) - fluxToAbMag(zFlux_PS) BETWEEN 0.4 AND 0.8 ; ")
+
+(query-execute LSST_query_014 "t_014")
+
+(define LSST_query_015_adapted
+  "SELECT v.objectId, v.ra_PS, v.decl_PS
+FROM   Object v, Object o
+WHERE  o.objectId = 448781132759061
+   AND cone_search(v.ra_PS, v.decl_PS, o.ra_PS, o.decl_PS, 1.);")
+
+(query-execute LSST_query_015_adapted "t_015_a")
+
+(define LSST_query_018
+  "SELECT objectId,
+       fluxToAbMag(uFlux_PS), fluxToAbMag(gFlux_PS),
+       fluxToAbMag(rFlux_PS), fluxToAbMag(iFlux_PS),
+       fluxToAbMag(zFlux_PS), fluxToAbMag(yFlux_PS),
+       ra_PS, decl_PS
+FROM   Object
+WHERE  uFlux_PS > 0
+AND    gFlux_PS > 0
+AND    rFlux_PS > 0 
+AND    iFlux_PS > 0 
+AND    zFlux_PS > 0 
+AND    yFlux_PS > 0 
+AND    ( fluxToAbMag(uFlux_PS) - fluxToAbMag(gFlux_PS) > 2.0 OR fluxToAbMag(uFlux_PS) > 22.3 )
+AND    fluxToAbMag(iFlux_PS) BETWEEN 0 AND 19 
+AND    fluxToAbMag(gFlux_PS)-fluxToAbMag(rFlux_PS) > 1.0 
+AND    ( fluxToAbMag(rFlux_PS)-fluxToAbMag(iFlux_PS) < (0.08 + 0.42 * (fluxToAbMag(gFlux_PS)-fluxToAbMag(rFlux_PS) - 0.96)) OR fluxToAbMag(gFlux_PS)-fluxToAbMag(rFlux_PS) > 2.26 ) 
+AND    fluxToAbMag(iFlux_PS)-fluxToAbMag(zFlux_PS) < 0.25 ;")
+
+(query-execute LSST_query_018 "t_018")
+
+(define Perf_Q4_adapted ;; Ok
+  "SELECT objectId
+FROM   Object
+JOIN   Source USING(objectId)
+WHERE  latestObsTime > 51048
+GROUP BY (objectId)
+HAVING COUNT(sourceId) <= 2 ;")
+
+(query-execute Perf_Q4_adapted "t_q4")
+
+(define LSST_query_020
+  "SELECT fluxToAbMag(gFlux_PS), objectId
+FROM   Object
+WHERE  gFlux_PS > 0
+AND    rFlux_PS > 0 
+AND    iFlux_PS > 0 
+AND    zFlux_PS > 0 
+AND    yFlux_PS > 0 
+   AND fluxToAbMag(gFlux_PS) <= 22
+   AND fluxToAbMag(gFlux_PS)-fluxToAbMag(rFlux_PS) >= -0.24 AND fluxToAbMag(gFlux_PS)-fluxToAbMag(rFlux_PS) < 0.35
+   AND fluxToAbMag(rFlux_PS)-fluxToAbMag(iFlux_PS) >= -0.27 AND fluxToAbMag(rFlux_PS)-fluxToAbMag(iFlux_PS) < 0.57
+   AND fluxToAbMag(iFlux_PS)-fluxToAbMag(zFlux_PS) >= -0.35 AND fluxToAbMag(iFlux_PS)-fluxToAbMag(zFlux_PS) < 0.70
+;")
+
+(query-execute LSST_query_020 "t_020")
+
+(define LSST_query_022
+  "SELECT o1.objectId AS objId1, 
+          o2.objectId AS objId2,
+          angular_distance(o1.ra_PS, o1.decl_PS,
+                             o2.ra_PS, o2.decl_PS) AS distance
+  FROM   Object o1, 
+         Object o2
+  WHERE  spatial_rectangle(o1.ra_PS, o1.decl_PS, 0.5, 2.8, 1.2, 3.7)
+    AND  angular_distance(o1.ra_PS, o1.decl_PS, o2.ra_PS, o2.decl_PS) < 0.05
+    AND  o1.objectId <> o2.objectId ;")
+
+(query-execute LSST_query_022 "t_022")
+
+(define LSST_query_022_crossmatch
+"SELECT o1.objectId AS objId1, 
+       o2.objectId AS objId2
+FROM   Object o1, 
+       Object o2
+CROSSMATCH (o1, ra_PS, decl_PS)
+       AND (o2, ra_PS, decl_PS)
+WITH RADIUS 0.005
+WHERE  o1.ra_PS BETWEEN 0.5 AND 1.2
+  AND  o1.decl_PS BETWEEN 2.8 AND 3.7
+  AND  o1.objectId <> o2.objectId ;")
+
+(query-execute LSST_query_022_crossmatch "t_022_c")
+
+(define Perf_Q5_adapted 
+  "SELECT ROUND(CAST(fluxToAbMag(gFlux_PS) - fluxToAbMag(rFlux_PS) AS numeric),0) AS GR, 
+          ROUND(CAST(fluxToAbMag(rFlux_PS) - fluxToAbMag(iFlux_PS) AS numeric),0) AS RI, 
+          ROUND(CAST(fluxToAbMag(iFlux_PS) - fluxToAbMag(zFlux_PS) AS numeric),0) AS IZ, 
+          ROUND(CAST(fluxToAbMag(zFlux_PS) - fluxToAbMag(yFlux_PS) AS numeric),0) AS ZY,
+          COUNT(*) AS pop
+FROM    Object
+WHERE    gFlux_PS > 0.
+   AND   rFlux_PS > 0.
+   AND   iFlux_PS > 0.
+   AND   zFlux_PS > 0.
+   AND   yFlux_PS > 0.
+   AND  (fluxToAbMag(gFlux_PS) + fluxToAbMag(rFlux_PS) +
+         fluxToAbMag(iFlux_PS) + fluxToAbMag(zFlux_PS) +
+         fluxToAbMag(yFlux_PS)) < 150
+GROUP BY GR, RI, IZ, ZY
+ORDER BY pop ;")
+
+(query-execute Perf_Q5_adapted "t_q5")
+
+(define LSST_query_053_adapted
+  "SELECT *
+FROM   Object
+WHERE  spatial_rectangle(ra_PS, decl_PS, 1.2, 3.5, 1.5, 3.7);")
+
+(query-execute LSST_query_053_adapted "t_053")
+
+(define LSST_query_055_adapted
+  "SELECT COUNT(*) as c
+FROM   Object
+WHERE  spatial_rectangle(ra_PS, decl_PS, 0.5, 3.5, 1.2, 3.7) ;")
+
+(query-execute LSST_query_055_adapted "t_055")
+
+(define Perf_Q3_crossmatch
+  "SELECT  S1.objectId AS s1, 
+        S2.objectId AS s2
+FROM    Object S1,                                   
+        Object S2
+CROSSMATCH (S1, ra_PS, decl_PS)
+       AND (S2, ra_PS, decl_PS)
+WITH RADIUS .002778 
+WHERE    S1.gFlux_PS > 0.
+   AND   S1.rFlux_PS > 0.
+   AND   S1.iFlux_PS > 0.
+   AND   S1.zFlux_PS > 0.
+   AND   S1.objectId <> S2.objectId 
+   AND   fluxToAbMag(S1.gFlux_PS)- fluxToAbMag(S1.rFlux_PS) <  0.7
+   AND   fluxToAbMag(S1.rFlux_PS)- fluxToAbMag(S1.iFlux_PS) >  0.4
+   AND   fluxToAbMag(S1.iFlux_PS)- fluxToAbMag(S1.zFlux_PS) >  0.4 ;" )
+
+(query-execute Perf_Q3_crossmatch "t_q3")
+
+(define Perf_Q7_adapted ;; Ok
+  "SELECT  objectId
+FROM    Object
+WHERE    gFlux_PS > 0.
+   AND   rFlux_PS > 0.
+   AND   iFlux_PS > 0.
+   AND   zFlux_PS > 0.
+   AND   fluxToAbMag(gFlux_PS)- fluxToAbMag(rFlux_PS) <  0.1
+   AND   fluxToAbMag(rFlux_PS)- fluxToAbMag(iFlux_PS) > -0.8
+   AND   fluxToAbMag(iFlux_PS)- fluxToAbMag(zFlux_PS) <  1.4 
+; ")
+
+(query-execute Perf_Q7_adapted "t_q7")
+
+(define Perf_Q8_adapted ;; Ok
+  "SELECT objectId, taiMidPoint, psfFlux
+FROM   Source
+JOIN   Object USING(objectId)
+JOIN   Filter USING(filterId)
+WHERE  ra_PS BETWEEN 0.5 AND 2.2
+  AND  decl_PS BETWEEN -0.5 AND 3.7
+  AND  filterName = 'g'
+ORDER BY objectId, taiMidPoint ASC ;")
+
+(query-execute Perf_Q8_adapted "t_q8") ;; empty
+
+(define Query022_crossmatch
+  "SELECT o1.objectId AS objId1, 
+          o2.objectId AS objId2
+  FROM   Object o1, 
+         Object o2
+  CROSSMATCH (o1, ra_PS, decl_PS)
+         AND (o2, ra_PS, decl_PS)
+  WITH RADIUS 0.005
+  WHERE  o1.ra_PS BETWEEN 0.5 AND 1.2
+    AND  o1.decl_PS BETWEEN 2.8 AND 3.7
+    AND  o1.objectId <> o2.objectId ;")
+
+(query-execute Query022_crossmatch "t_022c")
+
+(define LV1_250NodeTestPlan ;; Ok
+  "SELECT * FROM Object WHERE objectId = 383841227243996 ;")
+
+(query-execute LV1_250NodeTestPlan "t_lv1")
+ 
+(define LV1_250NodeTestPlan_a ;; Ok
+  "SELECT * FROM Source WHERE sourceId = 29808210533745462 ;")
+
+(query-execute LV1_250NodeTestPlan_a "t_lv1_a")
+
+(define LV1_250NodeTestPlan_b ;; Ok
+  "SELECT * FROM Source WHERE objectId = 439508298372785 ;")
+
+(query-execute LV1_250NodeTestPlan_b "t_lv1_b")
+
+(define LV2_250NodeTestPlan ;; Ok
+  "SELECT taiMidPoint, fluxToAbMag(psfFlux) as flux, fluxToAbMag(psfFluxSigma) as fluxsigma, ra, decl 
+FROM   Source
+WHERE  objectId = 383841227244506 ;")
+
+(query-execute LV2_250NodeTestPlan "t_lv2")
+
+(define LV3_250NodeTestPlan ;; Ok
+  "SELECT count(*) as c
+FROM   Object 
+WHERE  ra_PS between 1 and 2
+   AND decl_PS between 3 and 4
+   AND gFlux_PS > 0.
+   AND rFlux_PS > 0.
+   AND iFlux_PS > 0.
+   AND zFlux_PS > 0.
+   AND fluxToAbMag(zFlux_PS) BETWEEN 21 AND 21.5
+   AND fluxToAbMag(gFlux_PS)-fluxToAbMag(rFlux_PS) BETWEEN 0.3 AND 0.4
+   AND fluxToAbMag(iFlux_PS)-fluxToAbMag(zFlux_PS) BETWEEN 0.1 AND 0.12 ;")
+
+(query-execute LV3_250NodeTestPlan "t_lv3")
+
+(define HV1_250NodeTestPlan ;; Ok
+  "SELECT COUNT(*) as c FROM Object ;")
+
+(query-execute HV1_250NodeTestPlan "t_hv1")
+
+(define HV3_250NodeTestPlan ;; Ok
+  "SELECT count(*) AS n, AVG(ra_PS) as ra_avg, AVG(decl_PS) as decl_avg, htmId20
+FROM Object
+GROUP BY htmId20 ;")
+
+(query-execute HV3_250NodeTestPlan "t_hv3")
+
+(define LV2_IN2P3_300 ;; Ok
+  "SELECT  count(*) as c
+FROM Object
+WHERE ra_PS BETWEEN 1 AND 2
+ AND  decl_PS BETWEEN 3 AND 4 
+ AND  zFlux_PS > 0 
+ AND  fluxToAbMag(zFlux_PS) BETWEEN 21 AND 21.5 ;")
+
+(query-execute LV2_IN2P3_300 "t_lv2_300")
+
+(define LV3_IN2P3_300 ;; Ok
+  "SELECT count(*) as c FROM Object 
+WHERE   ra_PS BETWEEN 1 AND 2
+AND     decl_PS BETWEEN 3 AND 4
+AND   gFlux_PS > 0.
+AND   rFlux_PS > 0.
+AND   iFlux_PS > 0.
+AND   zFlux_PS > 0.
+AND	 fluxToAbMag(zFlux_PS) BETWEEN 21 AND 21.5
+AND	 fluxToAbMag(gFlux_PS) - fluxToAbMag(rFlux_PS) BETWEEN 0.3 AND 0.4
+AND	 fluxToAbMag(iFlux_PS) - fluxToAbMag(zFlux_PS) BETWEEN 0.1 AND 0.12 ;")
+
+(query-execute LV3_IN2P3_300 "t_lv3_300")
+
+(define LV4_IN2P3_300_a ;; Ok
+  "SELECT ra, decl 
+FROM Object 
+JOIN Source USING (objectId)
+WHERE objectId = 396210733061753
+AND latestObsTime = taiMidPoint ;")
+
+(query-execute LV4_IN2P3_300_a "t_lv4")
+
+(define HV2_IN2P3_300 ;; Ok
+  "SELECT COUNT(*) as c FROM Object WHERE gFlux_PS > 1e-25 ;")
+
+(query-execute HV2_IN2P3_300 "t_hv2_300")
+
+(define HV3_IN2P3_300 ;; Ok
+  "SELECT  objectId, ra_PS, decl_PS, uFlux_PS, gFlux_PS,
+	   rFlux_PS,iFlux_PS, zFlux_PS, yFlux_PS
+	FROM   Object
+	WHERE  iFlux_PS > 0.
+ AND   zFlux_PS > 0. 
+ AND   fluxToAbMag(iFlux_PS) - fluxToAbMag(zFlux_PS) > 4 ;")
+
+(query-execute HV3_IN2P3_300 "t_hv3_300")
+
+(define HV4_IN2P3_300 ;; Ok
+  "SELECT  objectId, ra_PS, decl_PS, fluxToAbMag(zFlux_PS)
+	FROM  Object 
+	WHERE zFlux_PS > 0. 
+ AND  fluxToAbMag(zFlux_PS) BETWEEN 25 AND 26 ;")
+
+(query-execute HV4_IN2P3_300 "t_hv4_300")
+
+(define HV5_IN2P3_300 ;; Ok 
+  "SELECT  objectId
+FROM  Source
+JOIN  Object USING(objectId) 
+WHERE  ra_PS BETWEEN  3 AND  4
+AND decl_PS BETWEEN -3 AND -2 ;")
+
+(query-execute HV5_IN2P3_300 "t_hv5_300")
+
+(define HV6_IN2P3_300_adapted
+  "SELECT  COUNT(*) as c FROM Object o1, Object o2 
+WHERE o1.ra_PS BETWEEN  0 AND  5
+  AND o1.decl_PS BETWEEN -7 AND  7 
+AND cone_search(o1.ra_PS, o1.decl_PS, o2.ra_PS, o2.decl_PS, 0.1) ;")
+
+(query-execute HV6_IN2P3_300_adapted "t_hv6_300")
+
+(define Q1_OptimalPartitionSize ;; Ok
+  "SELECT COUNT(*) as c FROM Source;")
+
+(query-execute Q1_OptimalPartitionSize "t_q1_opt")
+
+(define Q2_OptimalPartitionSize ;; Ok
+  "SELECT objectId, ra_PS, decl_PS,  fluxToAbMag(zFlux_PS) as z
+   FROM Object 
+   WHERE  zFlux_PS > 0. AND fluxToAbMag(zFlux_PS) BETWEEN 20 AND 24;")
+
+(query-execute Q2_OptimalPartitionSize "t_q2_opt")
+
+(define ConeSearch_Query_001
+  "SELECT *
+FROM Object
+WHERE cone_search(ra_PS, decl_PS, 1.3, 3.4, 0.2);")
+
+(query-execute ConeSearch_Query_001 "t_cs001")
+
+(define HV6_IN2P3_300_crossmatch
+  "SELECT  COUNT(*) as c FROM Object o1, Object o2 
+CROSSMATCH (o1, ra_PS, decl_PS)
+       AND (o2, ra_PS, decl_PS)
+WITH RADIUS 0.01
+WHERE o1.ra_PS BETWEEN  0 AND  5
+  AND o1.decl_PS BETWEEN -7 AND  7 ;")
+
+(query-execute HV6_IN2P3_300_crossmatch "t_hv6_300")
+
+;; Perf_Q2_adapted  :  it  should be  possible  to
+;; rewrited it  differently using angular distance
+;; instead
+
+(define Perf_Q2_adapted 
+  "SELECT DISTINCT o1.objectId, o1.ra_PS, o1.decl_PS
+FROM   Object o1, Object o2
+WHERE  ABS(o2.ra_PS   - o1.ra_PS  ) < 0.1/(2*COS(RADIANS(o1.decl_PS)))
+   AND ABS(o2.decl_PS - o1.decl_PS) < 0.05
+   AND ( SELECT COUNT(o3.objectId)
+         FROM   Object o3
+         WHERE  o1.objectId <> o3.objectId
+           AND  ABS(o1.ra_PS   - o3.ra_PS  ) < 0.1/COS(RADIANS(o3.decl_PS))
+           AND  ABS(o1.decl_PS - o3.decl_PS) < 0.1 ) > 10000 ; ")
+
+(query-execute Perf_Q2_adapted "t_q2")

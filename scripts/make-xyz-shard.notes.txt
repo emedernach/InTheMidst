@@ -1,0 +1,518 @@
+
+(LPT 
+ 4
+ (list            
+  (task  1     23436)
+  (task  2   5180113)
+  (task  3  10176356)
+  (task  4   8373027)
+  (task  5   5976156)
+  (task  6     42108)
+  (task  7   4732082)
+  (task  8  24129656)
+  (task  9  25361018)
+  (task 10  26287080)
+  (task 11  26032778)
+  (task 12   5837852)
+  (task 13    164781)
+  (task 14   6005814)
+  (task 15  10153800)
+  (task 16  11365471)
+  (task 17   9740038)
+  (task 18    439585)))
+
+pool 1 :  2 3 9 14
+pool 2 :  5 7 10 17
+pool 3 :  1 6 11 12 13 15 18
+pool 4 :  4 8 16
+
+POOL1=5281
+POOL2=5282
+POOL3=5283
+POOL4=5284
+
+READDATA='bunzip2 -c /home/postgres/databases/pt12/Object.csv.bz2'
+
+while read PORT SHARD X Y Z
+do
+ XMAX=`echo $X + 0.05 | bc`    
+ YMAX=`echo $Y + 0.05 | bc`    
+ ZMAX=`echo $Z + 0.05 | bc`
+ 
+ /tmp/make-xyz-shard.sh "psql -p ${PORT} postgres" Object /tmp/object.template ${SHARD} "${READDATA}" 3 5 ${X} ${XMAX} ${Y} ${YMAX} ${Z} ${ZMAX} &
+done <<EOF
+   ${POOL3}   001    0.95   -0.05   -0.15
+   ${POOL1}   002    0.95   -0.05    -0.1
+   ${POOL1}   003    0.95   -0.05   -0.05
+   ${POOL4}   004    0.95   -0.05       0
+   ${POOL2}   005    0.95   -0.05    0.05
+   ${POOL3}   006    0.95   -0.05     0.1
+   ${POOL2}   007    0.95       0   -0.15
+   ${POOL4}   008    0.95       0    -0.1
+   ${POOL1}   009    0.95       0   -0.05
+   ${POOL2}   010    0.95       0       0
+   ${POOL3}   011    0.95       0    0.05
+   ${POOL3}   012    0.95       0     0.1
+   ${POOL3}   013    0.95    0.05   -0.15
+   ${POOL1}   014    0.95    0.05    -0.1
+   ${POOL3}   015    0.95    0.05   -0.05
+   ${POOL4}   016    0.95    0.05       0
+   ${POOL2}   017    0.95    0.05    0.05
+   ${POOL3}   018    0.95    0.05     0.1
+EOF
+
+while read PORT SHARD X Y Z
+do
+
+# We rename htmId20 and  extendedness columns on Source tables because
+# it conflicts with the same column names on Object
+ 
+psql -p ${PORT} postgres <<EOF
+ALTER TABLE source_${SHARD}_xyz RENAME COLUMN htmId20 to htmId20_source ;
+ALTER TABLE source_${SHARD}_xyz RENAME COLUMN extendedness to extendedness_source ;
+EOF
+
+done <<EOF
+   ${POOL3}   001    0.95   -0.05   -0.15
+   ${POOL1}   002    0.95   -0.05    -0.1
+   ${POOL1}   003    0.95   -0.05   -0.05
+   ${POOL4}   004    0.95   -0.05       0
+   ${POOL2}   005    0.95   -0.05    0.05
+   ${POOL3}   006    0.95   -0.05     0.1
+   ${POOL2}   007    0.95       0   -0.15
+   ${POOL4}   008    0.95       0    -0.1
+   ${POOL1}   009    0.95       0   -0.05
+   ${POOL2}   010    0.95       0       0
+   ${POOL3}   011    0.95       0    0.05
+   ${POOL3}   012    0.95       0     0.1
+   ${POOL3}   013    0.95    0.05   -0.15
+   ${POOL1}   014    0.95    0.05    -0.1
+   ${POOL3}   015    0.95    0.05   -0.05
+   ${POOL4}   016    0.95    0.05       0
+   ${POOL2}   017    0.95    0.05    0.05
+   ${POOL3}   018    0.95    0.05     0.1
+EOF
+
+
+# Ok ca marche 
+
+# DONE: use parallel for table Source !
+# KO: use tee instead of using 18 bunzip2 processes !
+
+########################################
+
+
+
+#!/bin/bash
+
+# Data loading for PostgreSQL
+
+# XYZ sharding
+
+# First we have  to compute XYZ shard limits, probably  the best is to
+# have  well balanced  shards. As  a WN  have many  shards it  is more
+# important to balance the shards to WN than to have individually well
+# balanced shards.
+
+# A shard is defined by its limits:
+# xmin xmax ymin ymax zmin zmax
+
+# Then we have to assign shards to WN, we have to load balance all For
+# that we must know for each  shard how many lines there are. We could
+# use LPT, double random or other Azar load balancing algorithms
+
+# So a ShardDescription table is:
+
+CREATE TABLE ShardDescription (
+  idshard integer,
+  xmin double precision, 
+  xmax double precision,
+  ymin double precision,
+  ymax double precision,
+  zmin double precision,
+  zmax double precision,
+  count integer
+);
+
+# We will have shards with the same length :
+# xmax - xmin = ymax - ymin = zmax - zmin = length
+
+# Here is how we could have xmin ymin zmin from a sampling of Object :
+
+CREATE OR REPLACE FUNCTION master_rectangle_table(
+  len double precision
+)
+RETURNS VOID
+AS $$
+
+CREATE TABLE rectangle_table AS
+SELECT DISTINCT
+CAST(len*floor(cos(radians(ra_PS))*cos(radians(decl_PS))/len) AS NUMERIC) as x_min,
+CAST(len*floor(sin(radians(ra_PS))*cos(radians(decl_PS))/len) AS NUMERIC) as y_min,
+CAST(len*floor(sin(radians(decl_PS))/len) AS NUMERIC) as z_min
+FROM      ( SELECT ra_PS, decl_PS 
+            FROM master_object_000 
+  UNION ALL SELECT ra_PS, decl_PS 
+            FROM master_object_001 
+  UNION ALL SELECT ra_PS, decl_PS 
+            FROM master_object_002 
+  UNION ALL SELECT ra_PS, decl_PS 
+            FROM master_object_003
+  ) AS Object ;
+
+ALTER TABLE rectangle_table ADD COLUMN idshard serial primary key;
+ALTER TABLE rectangle_table ADD COLUMN count integer ;
+
+$$ language SQL ;
+
+SELECT master_rectangle_table(0.05); 
+
+SELECT * FROM rectangle_table ;
+
+ idshard | x_min | y_min | z_min 
+---------+-------+-------+-------
+       1 |  0.95 | -0.05 | -0.15
+       2 |  0.95 | -0.05 |  -0.1
+       3 |  0.95 | -0.05 | -0.05
+       4 |  0.95 | -0.05 |     0
+       5 |  0.95 | -0.05 |  0.05
+       6 |  0.95 | -0.05 |   0.1
+       7 |  0.95 |     0 | -0.15
+       8 |  0.95 |     0 |  -0.1
+       9 |  0.95 |     0 | -0.05
+      10 |  0.95 |     0 |     0
+      11 |  0.95 |     0 |  0.05
+      12 |  0.95 |     0 |   0.1
+      13 |  0.95 |  0.05 | -0.15
+      14 |  0.95 |  0.05 |  -0.1
+      15 |  0.95 |  0.05 | -0.05
+      16 |  0.95 |  0.05 |     0
+      17 |  0.95 |  0.05 |  0.05
+      18 |  0.95 |  0.05 |   0.1
+(18 rows)
+
+
+SELECT idshard, COUNT(*)
+FROM ( SELECT ra_PS, decl_PS 
+            FROM master_object_000 
+  UNION ALL SELECT ra_PS, decl_PS 
+            FROM master_object_001 
+  UNION ALL SELECT ra_PS, decl_PS 
+            FROM master_object_002 
+  UNION ALL SELECT ra_PS, decl_PS 
+            FROM master_object_003
+  ) AS Object, rectangle_table
+WHERE cos(radians(ra_PS))*cos(radians(decl_PS)) BETWEEN x_min AND x_min + 0.05 
+  AND sin(radians(ra_PS))*cos(radians(decl_PS)) BETWEEN y_min AND y_min + 0.05 
+  AND sin(radians(decl_PS)) BETWEEN z_min AND z_min + 0.05
+GROUP BY idshard ;
+
+ idshard | count  
+---------+--------
+       1 |    834
+       2 | 144872
+       3 | 275449
+       4 | 241206
+       5 | 173488
+       6 |   1457
+       7 | 139630
+       8 | 552753
+       9 | 563091
+      10 | 581431
+      11 | 590805
+      12 | 172474
+      13 |   5805
+      14 | 182500
+      15 | 312660
+      16 | 310312
+      17 | 266042
+      18 |  15321
+(18 rows)
+
+SELECT idshard, COUNT(*)
+FROM ( SELECT raObject, declObject 
+            FROM master_source_000 
+  UNION ALL SELECT raObject, declObject 
+            FROM master_source_001 
+  UNION ALL SELECT raObject, declObject 
+            FROM master_source_002 
+  UNION ALL SELECT raObject, declObject 
+            FROM master_source_003
+  ) AS Source, rectangle_table
+WHERE cos(radians(raObject))*cos(radians(declObject)) BETWEEN x_min AND x_min + 0.05 
+  AND sin(radians(raObject))*cos(radians(declObject)) BETWEEN y_min AND y_min + 0.05 
+  AND sin(radians(declObject)) BETWEEN z_min AND z_min + 0.05
+GROUP BY idshard ;
+
+...
+
+ idshard |  count   
+---------+----------
+       1 |    23436
+       2 |  5180113
+       3 | 10176356
+       4 |  8373027
+       5 |  5976156
+       6 |    42108
+       7 |  4732082
+       8 | 24129656
+       9 | 25361018
+      10 | 26287080
+      11 | 26032778
+      12 |  5837852
+      13 |   164781
+      14 |  6005814
+      15 | 10153800
+      16 | 11365471
+      17 |  9740038
+      18 |   439585
+(18 rows)
+
+Time: 5805017.113 ms
+
+(double-random 
+ 4
+ (list            
+  (task  1     23436)
+  (task  2   5180113)
+  (task  3  10176356)
+  (task  4   8373027)
+  (task  5   5976156)
+  (task  6     42108)
+  (task  7   4732082)
+  (task  8  24129656)
+  (task  9  25361018)
+  (task 10  26287080)
+  (task 11  26032778)
+  (task 12   5837852)
+  (task 13    164781)
+  (task 14   6005814)
+  (task 15  10153800)
+  (task 16  11365471)
+  (task 17   9740038)
+  (task 18    439585)))
+
+
+seq -w 18 | while read i
+do
+ rm -f /tmp/pipe.0$i
+ mkfifo /tmp/pipe.0$i
+done
+
+gunzip -c /home/postgres/databases/pt12/Source.csv.gz | tee /tmp/pipe.001 /tmp/pipe.002 /tmp/pipe.003 /tmp/pipe.004 /tmp/pipe.005 /tmp/pipe.006 /tmp/pipe.007 /tmp/pipe.008 /tmp/pipe.009 /tmp/pipe.010 /tmp/pipe.011 /tmp/pipe.012 /tmp/pipe.013 /tmp/pipe.014 /tmp/pipe.015 /tmp/pipe.016 /tmp/pipe.017 /tmp/pipe.018 &
+
+# seq -w 18 | while read i
+# do
+#  echo /tmp/pipe.0$i
+# done | echo tee
+
+POOL1=5281
+POOL2=5282
+POOL3=5283
+POOL4=5284
+
+# Source
+RA=34
+DECL=35
+
+while read PORT SHARD X Y Z
+do
+  XMAX=`echo $X + 0.05 | bc`    
+  YMAX=`echo $Y + 0.05 | bc`    
+  ZMAX=`echo $Z + 0.05 | bc`
+  
+  echo "/tmp/make-xyz-shard.sh \"psql -p ${PORT} postgres\" Source /tmp/source.template ${SHARD} \"cat /tmp/pipe.${SHARD}\" ${RA} ${DECL} ${X} ${XMAX} ${Y} ${YMAX} ${Z} ${ZMAX} " 
+done > /tmp/commands <<EOF
+   ${POOL3}   001    0.95   -0.05   -0.15
+   ${POOL1}   002    0.95   -0.05    -0.1
+   ${POOL1}   003    0.95   -0.05   -0.05
+   ${POOL4}   004    0.95   -0.05       0
+   ${POOL2}   005    0.95   -0.05    0.05
+   ${POOL3}   006    0.95   -0.05     0.1
+   ${POOL2}   007    0.95       0   -0.15
+   ${POOL4}   008    0.95       0    -0.1
+   ${POOL1}   009    0.95       0   -0.05
+   ${POOL2}   010    0.95       0       0
+   ${POOL3}   011    0.95       0    0.05
+   ${POOL3}   012    0.95       0     0.1
+   ${POOL3}   013    0.95    0.05   -0.15
+   ${POOL1}   014    0.95    0.05    -0.1
+   ${POOL3}   015    0.95    0.05   -0.05
+   ${POOL4}   016    0.95    0.05       0
+   ${POOL2}   017    0.95    0.05    0.05
+   ${POOL3}   018    0.95    0.05     0.1
+EOF
+
+cat /tmp/commands | parallel
+
+rm -f /tmp/commands /tmp/pipe.*
+
+# Non ca bloque ??
+
+########################################
+
+READDATA="gunzip -c /home/postgres/databases/pt12/Source.csv.gz"
+
+POOL1=5281
+POOL2=5282
+POOL3=5283
+POOL4=5284
+
+# Source
+RA=34
+DECL=35
+
+while read PORT SHARD X Y Z
+do
+  XMAX=`echo $X + 0.05 | bc`    
+  YMAX=`echo $Y + 0.05 | bc`    
+  ZMAX=`echo $Z + 0.05 | bc`
+  
+  echo "/tmp/make-xyz-shard.sh \"psql -p ${PORT} postgres\" Source /tmp/source.template ${SHARD} \"${READDATA}\" ${RA} ${DECL} ${X} ${XMAX} ${Y} ${YMAX} ${Z} ${ZMAX} " 
+done > /tmp/commands <<EOF
+   ${POOL3}   001    0.95   -0.05   -0.15
+   ${POOL1}   002    0.95   -0.05    -0.1
+   ${POOL1}   003    0.95   -0.05   -0.05
+   ${POOL4}   004    0.95   -0.05       0
+   ${POOL2}   005    0.95   -0.05    0.05
+   ${POOL3}   006    0.95   -0.05     0.1
+   ${POOL2}   007    0.95       0   -0.15
+   ${POOL4}   008    0.95       0    -0.1
+   ${POOL1}   009    0.95       0   -0.05
+   ${POOL2}   010    0.95       0       0
+   ${POOL3}   011    0.95       0    0.05
+   ${POOL3}   012    0.95       0     0.1
+   ${POOL3}   013    0.95    0.05   -0.15
+   ${POOL1}   014    0.95    0.05    -0.1
+   ${POOL3}   015    0.95    0.05   -0.05
+   ${POOL4}   016    0.95    0.05       0
+   ${POOL2}   017    0.95    0.05    0.05
+   ${POOL3}   018    0.95    0.05     0.1
+EOF
+
+cat /tmp/commands | parallel
+
+rm -f /tmp/commands /tmp/pipe.*
+
+########################################
+
+
+
+   
+
+TODO load balancer (makespan)
+
+# For that we need to know ra/decl column number
+
+# But the  Source table needs to  be sharded so that  sources from the
+# same object belongs together. How to do that efficiently ?
+
+# In fact ra/decl from Object is duplicated into Source:
+# Object:  ra_PS, decl_PS
+# Source:  raObject, declObject
+
+# At the same  time reading 300 times the same  file is not efficient.
+# Except that the  data will come progressively, we  will have 10G per
+# day  for instance.  Many processes  will read  the cached  file from
+# memory.
+
+# So we need only these parameters :
+# idshard length xmin ymin zmin 
+
+x_max = x_min + length ;
+y_max = y_min + length ;
+z_max = z_min + length ;
+
+x = cos(ra)*cos(decl) ;
+y = sin(ra)*cos(decl) ;
+z = sin(decl) ;
+
+if ((x_min <= x) && (x <= x_max))
+if ((y_min <= y) && (y <= y_max))
+if ((z_min <= x) && (z <= z_max))
+  print ;
+
+
+
+# ------------------------------------------------------------ #
+
+# Usage:
+# make-shard.sh psql -p 5281 postgres Source /tmp/source.template objectId 000 4 gunzip -c /data/clrlsstwn04/database/pt12/Source.csv.gz 4
+# make-shard.sh psql -p 5282 postgres Source /tmp/source.template objectId 001 4 gunzip -c /data/clrlsstwn04/database/pt12/Source.csv.gz 4
+# make-shard.sh psql -p 5283 postgres Source /tmp/source.template objectId 002 4 gunzip -c /data/clrlsstwn04/database/pt12/Source.csv.gz 4
+# make-shard.sh psql -p 5284 postgres Source /tmp/source.template objectId 003 4 gunzip -c /data/clrlsstwn04/database/pt12/Source.csv.gz 4
+
+# Templates are in the template directory
+
+CLIENT=$1
+TABLE_NAME=$2
+TABLE_TEMPLATE=$3
+SHARD_KEY=$4
+SHARD=$5
+TOTAL_SHARDS=$6
+READ_DATA=$7
+DATA_KEY=$8
+
+
+TABLE=${TABLE_NAME}_${SHARD}
+FIFO=/tmp/${TABLE}.fifo
+
+${CLIENT} <<EOF
+\timing
+
+-- Table Creation
+
+DROP TABLE IF EXISTS ${TABLE} ;
+
+CREATE TABLE ${TABLE} (
+`cat ${TABLE_TEMPLATE}`
+,
+ CHECK (${SHARD_KEY} % ${TOTAL_SHARDS} = ${SHARD})
+) ;
+EOF
+
+# TODO: We have to add keys and indexes after loading
+# ALTER TABLE ${TABLE} ADD PRIMARY KEY();
+# But the key is not necessarily ${SHARD_KEY} !
+
+# Object shards:
+# ALTER TABLE object_000 ADD PRIMARY KEY(objectId);
+
+# Source shards:
+# ALTER TABLE source_000 ADD PRIMARY KEY(sourceId);
+# CREATE INDEX CONCURRENTLY source_object_idx ON source_000(objectId);
+
+
+echo
+echo == Data Loading ==
+echo
+
+rm -f ${FIFO}
+mkfifo ${FIFO}
+
+# On each shard we will load only the needed part
+# for that we need to filter the data :
+
+# For high precision in awk:
+# awk -v 'CONVFMT=%.17g' -F',' '//{ printf(%0.17g \n, 1 + $3); }' z.csv 
+# 1.12345678901234568 
+
+
+
+
+${READ_DATA}   awk -F',' //{ if (\$${DATA_KEY} % ${TOTAL_SHARDS} == ${SHARD}) print; } > ${FIFO} &
+
+${CLIENT} <<EOF
+\timing
+
+-- Data Loading
+COPY ${TABLE}
+FROM '${FIFO}'
+DELIMITERS ','
+WITH NULL 'NULL' 
+CSV  QUOTE '''' ;
+
+EOF
+
+wait
+rm -f ${FIFO}
